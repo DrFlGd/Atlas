@@ -12,9 +12,10 @@
  * in 2D, with a note.
  *
  * Pressing a location in 3D goes to it (`focusLocation`): its floor is
- * shown and the model is cut at head height above it. Going back (All
- * floors, Back to the start, Escape or B, which clear the selection)
- * shows every floor again without that cut (`leaveFocus`). The names of
+ * shown and the model is cut at head height above it. Closing its card
+ * keeps them; going back (All floors, Back to the start, and Escape, B or
+ * Back once the card is closed) shows every floor again without that cut
+ * (`leaveFocus`). The names of
  * the areas float over the view unless the person turned them off, a
  * choice kept on the device.
  */

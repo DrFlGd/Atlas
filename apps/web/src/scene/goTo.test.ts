@@ -9,6 +9,7 @@ import {
   goToDistance,
   headCut,
   MIN_AREA_RADIUS,
+  shiftedTarget,
   shortestTurn,
 } from './goTo';
 
@@ -54,6 +55,21 @@ describe('the view of a location', () => {
     const [x, , z] = cameraOffset(100, Math.PI / 2, Math.PI / 2);
     expect(x).toBeCloseTo(100);
     expect(z).toBeCloseTo(0);
+  });
+
+  it('looks a little past a location so it shows above a card over the view’s foot', () => {
+    const options = { distance: 26, azimuth: 0, fovDegrees: 50, height: 800 };
+    // Facing north (the camera on the south side, +z): the point looked at moves toward the camera.
+    const [x, y, z] = shiftedTarget([10, 3, 20], 100, options);
+    const perPixel = (2 * 26 * Math.tan((25 * Math.PI) / 180)) / 800;
+    expect(x).toBeCloseTo(10);
+    expect(y).toBe(3);
+    expect(z).toBeCloseTo(20 + 100 * perPixel);
+    // Facing another way, along that way; no shift, no move.
+    const [x2, , z2] = shiftedTarget([10, 3, 20], 100, { ...options, azimuth: Math.PI / 2 });
+    expect(x2).toBeCloseTo(10 + 100 * perPixel);
+    expect(z2).toBeCloseTo(20);
+    expect(shiftedTarget([10, 3, 20], 0, options)).toEqual([10, 3, 20]);
   });
 
   it('frames an area whole, further for a larger one or a narrower view', () => {

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { collectErrors, mapStatus, openMap, storedSetting } from './helpers';
-import { mapSettled } from './touch';
+import { choosePlace, mapSettled } from './touch';
 
 /**
  * The 3D view of a map with a model: the demo's Mossgate Keep, a made-up
@@ -152,6 +152,19 @@ async function dotOf(page: Page, id: string) {
   return dots.find((dot) => dot.id === id);
 }
 
+/** Waits until the view, at rest, shows a location's dot near a point of its box (within `reach` pixels). */
+async function dotSettlesAt(page: Page, id: string, x: number, y: number, reach: number) {
+  await expect
+    .poll(
+      async () => {
+        const dot = await dotOf(page, id);
+        return dot ? Math.max(Math.abs(dot.x - x), Math.abs(dot.y - y)) : Infinity;
+      },
+      { timeout: 20_000 },
+    )
+    .toBeLessThan(reach);
+}
+
 test('pressing a location goes to it: its floor, cut above it, the view down at it; Escape goes back', async ({
   page,
 }) => {
@@ -175,18 +188,45 @@ test('pressing a location goes to it: its floor, cut above it, the view down at 
     'aria-pressed',
     'true',
   );
-  // Flown down to it: at rest, it is near the middle of the view, and the view is close.
-  await expect(status).toHaveAttribute('data-on-screen', /keep-chest-hall/, { timeout: 20_000 });
-  const after = (await dotOf(page, chest))!;
-  expect(Math.abs(after.x - box.width / 2)).toBeLessThan(box.width * 0.1);
-  expect(Math.abs(after.y - box.height / 2)).toBeLessThan(box.height * 0.1);
+  // Flown down to it: at rest, it is near the middle of the view (the card is beside it here).
+  await dotSettlesAt(page, chest, box.width / 2, box.height / 2, box.height * 0.1);
 
-  // Escape goes back: every floor, no cut.
-  await page.keyboard.press('Escape');
+  // A press on nothing closes the card only: the floor and the cut stay.
+  await page.mouse.click(box.x + box.width * 0.3, box.y + box.height * 0.85);
   await expect(status).toHaveAttribute('data-selected', '');
+  await expect(status).toHaveAttribute('data-focus', chest);
+  await expect(status).toHaveAttribute('data-floor', 'demo:layer:keep-ground');
+  await expect(status).toHaveAttribute('data-cut', '6.2');
+  // So does the card's Close.
+  const again = (await dotOf(page, chest))!;
+  await page.mouse.click(box.x + again.x, box.y + again.y);
+  await expect(status).toHaveAttribute('data-selected', chest);
+  await page.getByTestId('close-place').click();
+  await expect(status).toHaveAttribute('data-selected', '');
+  await expect(status).toHaveAttribute('data-cut', '6.2');
+  // Escape then goes back: every floor, no cut.
+  await page.keyboard.press('Escape');
   await expect(status).toHaveAttribute('data-floor', 'all');
   await expect(status).toHaveAttribute('data-cut', '');
   await expect(status).toHaveAttribute('data-focus', '');
+
+  // With the card open, Escape closes it first, then goes back.
+  await page.getByTestId('search-input').fill('Hall chest');
+  await page
+    .getByTestId('search-result')
+    .filter({ hasText: 'Hall chest' })
+    .first()
+    .getByRole('button')
+    .first()
+    .click();
+  await expect(status).toHaveAttribute('data-focus', chest);
+  await page.locator('.scene-canvas').focus();
+  await page.keyboard.press('Escape');
+  await expect(status).toHaveAttribute('data-selected', '');
+  await expect(status).toHaveAttribute('data-cut', '6.2');
+  await page.keyboard.press('Escape');
+  await expect(status).toHaveAttribute('data-floor', 'all');
+  await expect(status).toHaveAttribute('data-cut', '');
 
   // All floors goes back too.
   await page.getByTestId('search-input').fill('Keep relic');
@@ -306,11 +346,78 @@ test('with a controller: the D-pad holds a location, A goes to it, B goes back',
   await expect(status).toHaveAttribute('data-selected', held);
   await expect(status).toHaveAttribute('data-focus', held);
   await expect(status).not.toHaveAttribute('data-cut', '');
-  // B closes it and goes back to the whole view.
+  // B closes it, keeping the floor and cut; B again goes back to the whole view.
   await press(1);
   await expect(status).toHaveAttribute('data-selected', '');
+  await expect(status).toHaveAttribute('data-focus', held);
+  await expect(status).not.toHaveAttribute('data-cut', '');
+  await press(1);
   await expect(status).toHaveAttribute('data-focus', '');
   await expect(status).toHaveAttribute('data-floor', 'all');
   await expect(status).toHaveAttribute('data-cut', '');
   expect(errors).toEqual([]);
+});
+
+test('a row of Progress frames its area, as its title does', async ({ page }) => {
+  const errors = collectErrors(page);
+  await openKeep(page);
+  const status = page.getByTestId('scene-status');
+  /** The cave's dots once the view is at rest after `move`. */
+  const caveDots = async (move: () => Promise<void>) => {
+    const dots = await dotsAfter(page, move);
+    await page.waitForTimeout(1200);
+    const json = await status.getAttribute('data-on-screen');
+    return (JSON.parse(json ?? '[]') as { id: string; x: number; y: number }[])
+      .filter((dot) => dot.id.includes(':keep-cave-'))
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .concat(dots.slice(0, 0));
+  };
+  // The title pressed, from where the view starts.
+  const byTitle = await caveDots(() =>
+    page.getByTestId('scene-title').filter({ hasText: 'Glimmer Caves' }).click(),
+  );
+  expect(byTitle.length).toBeGreaterThan(2);
+  await caveDots(() => page.getByTestId('scene-recenter').click());
+  // The row of Progress, from the same start: the same view.
+  await page.getByTestId('section-progress').click();
+  const byRow = await caveDots(() =>
+    page
+      .getByTestId('region-progress')
+      .getByRole('button', { name: /^Glimmer Caves/ })
+      .click(),
+  );
+  expect(byRow.map((dot) => dot.id)).toEqual(byTitle.map((dot) => dot.id));
+  byRow.forEach((dot, k) => {
+    expect(Math.abs(dot.x - byTitle[k]!.x)).toBeLessThan(6);
+    expect(Math.abs(dot.y - byTitle[k]!.y)).toBeLessThan(6);
+  });
+  expect(errors).toEqual([]);
+});
+
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  test('a location gone to shows in the middle of what its card leaves free', async ({ page }) => {
+    const errors = collectErrors(page);
+    await page.goto('./');
+    await page.getByTestId('map-chip').click();
+    await page
+      .getByTestId('maps-menu')
+      .getByRole('button', { name: /^Mossgate Keep/ })
+      .click();
+    const status = page.getByTestId('scene-status');
+    await expect(status).toHaveAttribute('data-ready', 'true', { timeout: 60_000 });
+    await choosePlace(page, 'Hall chest');
+    const chest = 'demo:loc:keep-keep-chest-hall';
+    await expect(status).toHaveAttribute('data-focus', chest);
+    const card = page.getByTestId('place-sheet');
+    await expect(card).toBeVisible();
+    await page.waitForTimeout(400);
+    const view = (await page.getByTestId('scene-view').boundingBox())!;
+    const over = (await card.boundingBox())!;
+    const free = over.y - view.y;
+    expect(free).toBeLessThan(view.height * 0.9);
+    await dotSettlesAt(page, chest, view.width / 2, free / 2, 40);
+    expect(errors).toEqual([]);
+  });
 });

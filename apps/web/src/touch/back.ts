@@ -1,4 +1,5 @@
 import { moveMap, select } from '../state/actions';
+import { leaveFocus, useScene3d } from '../state/scene3d';
 import { checklistBack } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { backStep } from './backStack';
@@ -33,6 +34,8 @@ export function handleBack(): boolean {
     place:
       atlas.selectedId !== null &&
       (wide || (touch.section === 'map' && !touch.search && !touch.filters)),
+    sceneFocus:
+      useScene3d.getState().focus !== null && (wide || (touch.section === 'map' && !touch.search)),
     section: touch.section,
     listsPage: page !== undefined && page.kind !== 'index',
     guidesBack: canGoBack(useReader.getState()),
@@ -71,6 +74,9 @@ export function handleBack(): boolean {
       return true;
     case 'place':
       select(null);
+      return true;
+    case 'scene-focus':
+      leaveFocus();
       return true;
     case 'lists-page':
       checklistBack();

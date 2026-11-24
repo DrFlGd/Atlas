@@ -20,6 +20,7 @@ import {
   GO_TO_TILT,
   goToDistance,
   MIN_AREA_RADIUS,
+  shiftedTarget,
 } from './goTo';
 import { modelLoader, type ModelLoader } from './loader';
 
@@ -716,18 +717,22 @@ export class SceneEngine {
   /**
    * Goes to a location: looks down at it from close by, a little tilted,
    * facing the way the view faces now (see `goTo.ts`). Its height, or with
-   * none what lies under it below `top`.
+   * none what lies under it below `top`. With `shift`, it shows that many
+   * CSS pixels above the middle of the view (above a card over its foot).
    */
-  goTo(px: number, py: number, height: number | null, top: number | null): void {
+  goTo(px: number, py: number, height: number | null, top: number | null, shift = 0): void {
     const [x, , z] = this.options.frame.fromPixel(px, py, 0);
     const y = height ?? this.groundAt(x, z, top);
+    const distance = goToDistance(this.extent.size, this.controls.minDistance);
+    const azimuth = this.controls.getAzimuthalAngle();
+    const target = shiftedTarget([x, y + DOT_LIFT, z], shift, {
+      distance,
+      azimuth,
+      fovDegrees: this.camera.fov,
+      height: this.height,
+    });
     this.fly(
-      {
-        target: new THREE.Vector3(x, y + DOT_LIFT, z),
-        distance: goToDistance(this.extent.size, this.controls.minDistance),
-        azimuth: this.controls.getAzimuthalAngle(),
-        polar: GO_TO_TILT,
-      },
+      { target: new THREE.Vector3(...target), distance, azimuth, polar: GO_TO_TILT },
       GO_TO_MS,
     );
   }

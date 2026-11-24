@@ -15,12 +15,39 @@ import { headCut } from './goTo';
 import { SceneTitles } from './SceneTitles';
 import { areaTitles, type AreaTitle } from './titles';
 
+/** Shows the whole of an area, from above (its title pressed, its row in Progress): back from a location first. */
+function showWhole(view: SceneEngine, title: AreaTitle): void {
+  leaveFocus();
+  view.frameArea(title.px, title.py, title.height, title.radius);
+}
+
+/**
+ * How far above the middle of the view a location must show to be in the
+ * middle of what the place card leaves free, where the card lies across
+ * the foot of the view (on a phone); 0 where it does not.
+ */
+function cardShift(view: HTMLElement | null): number {
+  const card = document.querySelector('[data-testid="place-sheet"]');
+  if (!view || !card) return 0;
+  const box = view.getBoundingClientRect();
+  const over = card.getBoundingClientRect();
+  if (over.width < box.width * 0.6 || over.top <= box.top || over.top >= box.bottom) return 0;
+  const free = Math.max(over.top - box.top, box.height * 0.25);
+  return box.height / 2 - free / 2;
+}
+
 /**
  * Goes to a location in the 3D view: shows its floor (the one its height
  * is on, or with no height its own layer), cuts the model at head height
- * above it, and flies down to it (see `goTo.ts`).
+ * above it, and flies down to it (see `goTo.ts`), into the part of the
+ * view the place card leaves free.
  */
-function goToLocation3d(view: SceneEngine, location: Location, floors: readonly Layer[]): void {
+function goToLocation3d(
+  view: SceneEngine,
+  location: Location,
+  floors: readonly Layer[],
+  container: HTMLElement | null,
+): void {
   let floor =
     floors.length === 0
       ? undefined
@@ -32,7 +59,12 @@ function goToLocation3d(view: SceneEngine, location: Location, floors: readonly 
   if (!floor && floors.length > 0) floor = floorAt(floors, height);
   const top = floor?.heights?.[1] ?? null;
   focusLocation(location.id, floor?.id ?? null, headCut(height, top));
-  view.goTo(location.x, location.y, location.height ?? null, top);
+  // The card is drawn by now; it may still be rising into place.
+  requestAnimationFrame(() => {
+    if (!view.gone) {
+      view.goTo(location.x, location.y, location.height ?? null, top, cardShift(container));
+    }
+  });
 }
 
 /**
@@ -249,51 +281,6 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
     else engine.recenter();
   }, [engine, request]);
 
-  // A location pressed (its dot, a row of a list, a search result, a link,
-  // the controller): the view goes to it. A location shown from elsewhere
-  // (a search result, a list) when the view opens is gone to as well; a
-  // selection it opens with is only looked at. Any other point asked for
-  // (an area of the map) is looked at.
-  const seen = useRef<{ engine: SceneEngine; selected: string | null; fly: number } | null>(null);
-  useEffect(() => {
-    if (!engine || engine.gone || !pack) return;
-    const before = seen.current?.engine === engine ? seen.current : null;
-    seen.current = { engine, selected: selectedId, fly: fly?.seq ?? 0 };
-    const location = selectedId ? pack.locations.get(selectedId) : undefined;
-    const here = location?.mapId === mapId ? location : undefined;
-    // `goToLocation` aims the 2D map at the location (lower on a narrow screen): the same x.
-    const flownTo = here !== undefined && fly !== null && Math.abs(fly.x - here.x) < 1;
-    if (!before) {
-      if (here && flownTo) goToLocation3d(engine, here, floors);
-      else if (here) engine.lookAt(here.id, true);
-      return;
-    }
-    if (here && selectedId !== before.selected) {
-      goToLocation3d(engine, here, floors);
-      return;
-    }
-    if (fly && fly.seq !== before.fly) {
-      if (here && flownTo) goToLocation3d(engine, here, floors);
-      else engine.lookAtPixel(fly.x, fly.y);
-    }
-  }, [engine, pack, mapId, selectedId, fly, floors]);
-
-  // Back from a location: the selection cleared (Escape, B, Back, a press
-  // on nothing), another map, or the view closed.
-  useEffect(
-    () =>
-      useAtlas.subscribe((state, previous) => {
-        if (previous.selectedId !== null && state.selectedId === null) leaveFocus();
-      }),
-    [],
-  );
-  useEffect(
-    () => () => {
-      leaveFocus();
-    },
-    [mapId],
-  );
-
   // The names of the areas: those on the floor shown, unless turned off.
   const titlesOn = useScene3d((s) => s.titles);
   const allTitles = useMemo(
@@ -323,10 +310,54 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
       })),
     );
   }, [engine, titles, floor]);
+
+  // A location pressed (its dot, a row of a list, a search result, a link,
+  // the controller): the view goes to it. A location shown from elsewhere
+  // (a search result, a list) when the view opens is gone to as well; a
+  // selection it opens with is only looked at. An area asked for (a row of
+  // Progress) is shown whole, as its title shows it; any other point asked
+  // for is looked at.
+  const seen = useRef<{ engine: SceneEngine; selected: string | null; fly: number } | null>(null);
+  useEffect(() => {
+    if (!engine || engine.gone || !pack) return;
+    const before = seen.current?.engine === engine ? seen.current : null;
+    seen.current = { engine, selected: selectedId, fly: fly?.seq ?? 0 };
+    const location = selectedId ? pack.locations.get(selectedId) : undefined;
+    const here = location?.mapId === mapId ? location : undefined;
+    // `goToLocation` aims the 2D map at the location (lower on a narrow screen): the same x.
+    const flownTo = here !== undefined && fly !== null && Math.abs(fly.x - here.x) < 1;
+    const area = fly?.region ? allTitles.find((title) => title.id === fly.region) : undefined;
+    const container = containerRef.current;
+    if (!before) {
+      if (here && flownTo) goToLocation3d(engine, here, floors, container);
+      else if (here) engine.lookAt(here.id, true);
+      else if (area) showWhole(engine, area);
+      return;
+    }
+    if (here && selectedId !== before.selected) {
+      goToLocation3d(engine, here, floors, container);
+      return;
+    }
+    if (fly && fly.seq !== before.fly) {
+      if (here && flownTo) goToLocation3d(engine, here, floors, container);
+      else if (area) showWhole(engine, area);
+      else engine.lookAtPixel(fly.x, fly.y);
+    }
+  }, [engine, pack, mapId, selectedId, fly, floors, allTitles]);
+
+  // Back from a location on another map, or when the view closes. Closing
+  // its card keeps its floor and cut: Back, All floors or Back to the start
+  // go back from them.
+  useEffect(
+    () => () => {
+      leaveFocus();
+    },
+    [mapId],
+  );
+
   const showArea = useCallback(
     (title: AreaTitle) => {
-      leaveFocus();
-      engine?.frameArea(title.px, title.py, title.height, title.radius);
+      if (engine) showWhole(engine, title);
     },
     [engine],
   );

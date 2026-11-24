@@ -65,6 +65,25 @@ export function frameDistance(radius: number, fovDegrees: number, aspect: number
   return (Math.max(radius, MIN_AREA_RADIUS) / Math.tan(half)) * 1.2;
 }
 
+/**
+ * The point to look at so that `target` shows `shift` CSS pixels above the
+ * middle of a view `height` pixels high (vertical field `fovDegrees`), the
+ * camera `distance` from it nearly straight down, facing `azimuth`: on a
+ * phone, the middle of what the place card leaves free. Up the screen is
+ * away from the camera along the ground.
+ */
+export function shiftedTarget(
+  target: readonly [number, number, number],
+  shift: number,
+  options: { distance: number; azimuth: number; fovDegrees: number; height: number },
+): [number, number, number] {
+  const { distance, azimuth, fovDegrees, height } = options;
+  if (shift === 0 || height <= 0) return [target[0], target[1], target[2]];
+  const perPixel = (2 * distance * Math.tan((fovDegrees * Math.PI) / 360)) / height;
+  const along = shift * perPixel;
+  return [target[0] + Math.sin(azimuth) * along, target[1], target[2] + Math.cos(azimuth) * along];
+}
+
 /** Where the camera is from the point it looks at: three.js's spherical angles, Y up. */
 export function cameraOffset(
   distance: number,
