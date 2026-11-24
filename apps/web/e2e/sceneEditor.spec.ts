@@ -273,43 +273,46 @@ test('with a controller: A puts a location where the crosshair points', async ({
     (window as unknown as { testPad: typeof pad }).testPad = pad;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
   });
-  const press = async (button: number) => {
-    for (const value of [1, 0]) {
-      await page.evaluate(
-        ([index, amount]) => {
-          const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
-          pad.buttons[index!] = { pressed: amount === 1, value: amount };
-        },
-        [button, value],
-      );
-      await page.waitForTimeout(150);
-    }
+  // The app reads the pad once a frame, and a 3D frame can take longer than a short press
+  // on a busy machine: so a button is held down until what it does shows, then let go.
+  const setButton = async (button: number, value: number) => {
+    await page.evaluate(
+      ([index, amount]) => {
+        const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
+        pad.buttons[index!] = { pressed: amount === 1, value: amount };
+      },
+      [button, value],
+    );
   };
-  const lean = async (x: number, ms: number) => {
+  const setStick = async (x: number) => {
     await page.evaluate((amount) => {
       (window as unknown as { testPad: { axes: number[] } }).testPad.axes[0] = amount;
     }, x);
-    await page.waitForTimeout(ms);
-    await page.evaluate(() => {
-      (window as unknown as { testPad: { axes: number[] } }).testPad.axes[0] = 0;
-    });
   };
   await openKeep(page);
-  await editFromAbove(page);
-  // The controller in hand: the crosshair shows; moved off any location it holds, a little
-  // each way in turn, so that it stays over the model.
-  await lean(0.5, 120);
+  const dots = await editFromAbove(page);
+  // The view starts on a location: open ground near the middle is dragged under the crosshair
+  // (a drag moves the ground with the pointer), so the crosshair holds no location. The view
+  // glides on a moment after a move, so the check waits for it to come to rest.
+  const view = (await page.getByTestId('scene-view').boundingBox())!;
+  const middle = { x: view.x + view.width / 2, y: view.y + view.height / 2 };
+  const open = await emptyPoint(page, dots, { x: 0.5, y: 0.5 });
+  await page.mouse.move(open.x, open.y);
+  await page.mouse.down();
+  await page.mouse.move(middle.x, middle.y, { steps: 12 });
+  await page.mouse.up();
+  // The controller in hand: the stick just past its dead zone shows the crosshair.
   const reticle = page.getByTestId('pad-reticle');
+  const putHere = page.getByTestId('pad-hints').locator('[data-action="open-location"]');
+  await setStick(0.35);
   await expect(reticle).toBeVisible();
-  for (let k = 0; k < 12 && (await page.getByTestId('pad-reticle-target').count()) > 0; k++) {
-    await lean(k % 2 === 0 ? -0.5 : 0.5, 120 * (k + 1));
-  }
+  await setStick(0);
+  await page.waitForTimeout(700);
   await expect(page.getByTestId('pad-reticle-target')).toHaveCount(0);
-  await expect(
-    page.getByTestId('pad-hints').locator('[data-action="open-location"]'),
-  ).toContainText('Put here');
-  await press(0);
+  await expect(putHere).toContainText('Put here');
+  await setButton(0, 1);
   await expect(page.getByTestId('new-location-panel')).toBeVisible();
+  await setButton(0, 0);
   await expect(page.getByTestId('location-position')).toContainText('high');
   expect(errors).toEqual([]);
 });
