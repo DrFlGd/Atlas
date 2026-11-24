@@ -17,7 +17,9 @@
 //! A job is `{"input": "<model file>", "pack": "<pack folder>", "options":
 //! {…}}` (see `atlas_scene::Options`; relative paths are taken from the
 //! job file's folder). The model file is a raw `.glb`, or any model file
-//! `atlas_scene::formats` reads (glTF, OBJ, STL, PLY). `build` writes
+//! `atlas_scene::formats` reads (glTF, OBJ, STL, PLY, ActorX `.psk`), or an
+//! Atlas level file (`.atlaslevel`, `atlas_scene::level`: the meshes of a
+//! game level the Map Maker's helper put together). `build` writes
 //! `{"event":"progress","fraction":…, "message":…}` lines, then
 //! `{"event":"done","scene":…,"report":…}` (and `"rendered"` when it drew
 //! the map), or `{"event":"error","message":…}` and exits with 1. `check`

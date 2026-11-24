@@ -14,6 +14,7 @@ dependencies = [
   "numpy",
   "scipy",
   "Pillow==12.3.0",
+  "PyYAML==6.0.3",
 ]
 
 [project.scripts]

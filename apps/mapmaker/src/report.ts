@@ -2,6 +2,8 @@
  * The report the helper (tools/gamefiles) writes, and the plain-language words the window uses for it.
  */
 
+import type { LevelReport } from './model';
+
 export type SourceStatus = 'ok' | 'partial' | 'failed' | 'missing' | 'not-decoded' | 'timed-out';
 export type GeometrySourceName = 'collision' | 'navmesh' | 'mapPieces';
 
@@ -623,6 +625,10 @@ export interface MadeModel {
   /** East to west, south to north, and height. */
   sizeMetres: [number, number, number];
   missingFiles: string[];
+  /** A game level export: `unreal` (FModel) or `unity`; absent or null for a model file. */
+  level?: 'unreal' | 'unity' | null;
+  /** A game level: what was placed, left out and not found. */
+  levelReport?: LevelReport | null;
 }
 
 export type AnyReport = Report | MakeReport;

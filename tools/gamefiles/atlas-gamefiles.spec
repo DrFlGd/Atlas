@@ -6,7 +6,7 @@
 # imported: its instruction and field definitions (JSON), type stubs (.pyi) and Havok type lists (XML). Everything else Soulstruct
 # carries stays out, and must: the Oodle DLL, the .exe and .dll tools, soulstruct-havok's Havok templates, and the
 # paramdef and material binders. `check_bundle` below fails the build if any of them got in.
-# Pillow draws the Map Maker's floor pictures and tiles. Plotting and GUI libraries that some Soulstruct modules import
+# Pillow draws the Map Maker's floor pictures and tiles; PyYAML reads Unity scenes. Plotting and GUI libraries that some Soulstruct modules import
 # only when present are left out.
 
 import re
@@ -49,6 +49,8 @@ hidden = [
     "PIL.PngImagePlugin",
     # The game's textures (DDS, dds.py).
     "PIL.DdsImagePlugin",
+    # Unity scenes (unity.py), imported when one is read.
+    "yaml",
 ]
 
 excluded = [
