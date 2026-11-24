@@ -45,8 +45,13 @@ export interface Scene3dState {
   webgl: WebglSupport;
   /** With floors: every floor shown at once, rather than the one of `layerId`. */
   allFloors: boolean;
-  /** The height above which the model is cut away, when no floor is picked; null: none. */
+  /**
+   * The height above which the model is cut away, when no floor is picked;
+   * null: none. It belongs to the map it was set on (`cutMapId`): another
+   * map, with heights of its own, is shown uncut (see `cutOf`).
+   */
   cut: number | null;
+  cutMapId: string | null;
   /** Cut away what lies between the camera and the point looked at. */
   cutTowardCamera: boolean;
   request: SceneRequest | null;
@@ -71,6 +76,7 @@ export const useScene3d = create<Scene3dState>()(() => ({
   webgl: 'unknown',
   allFloors: true,
   cut: null,
+  cutMapId: null,
   cutTowardCamera: false,
   request: null,
   focus: null,
@@ -243,9 +249,17 @@ export function requestSceneView(kind: SceneRequest['kind']): void {
   useScene3d.setState({ request: { kind, seq: requestSeq++ } });
 }
 
-/** Sets the height cut (null: none) and the cut toward the camera. */
-export function setCut(cut: number | null): void {
-  useScene3d.setState({ cut, focus: null });
+/** Sets the height cut of a map (null: none). */
+export function setCut(cut: number | null, mapId: string): void {
+  useScene3d.setState({ cut, cutMapId: cut === null ? null : mapId, focus: null });
+}
+
+/** The height cut of a map: the free cut, when it was set on that map; else none. */
+export function cutOf(
+  state: Pick<Scene3dState, 'cut' | 'cutMapId'>,
+  mapId: string | null,
+): number | null {
+  return mapId !== null && state.cutMapId === mapId ? state.cut : null;
 }
 
 export function setCutTowardCamera(on: boolean): void {

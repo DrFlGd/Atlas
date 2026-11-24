@@ -7,7 +7,7 @@ import { Reticle } from '../input/Reticle';
 import { select } from '../state/actions';
 import { useMarkersOn } from '../state/derived';
 import { openRouteId, routeDrawing, stepIndexOf, useGameRoutes, useRoutes } from '../state/routes';
-import { focusLocation, leaveFocus, useScene3d, webglFailed } from '../state/scene3d';
+import { cutOf, focusLocation, leaveFocus, useScene3d, webglFailed } from '../state/scene3d';
 import { useAtlas } from '../state/store';
 import { deviceSignals } from './device';
 import { SceneEngine, type SceneDot, type SceneStatus } from './engine';
@@ -255,7 +255,8 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
   useSceneEditing(engine, mapId);
 
   // The cuts: above the location gone to, the floor's top, or the free cut; and toward the camera.
-  const cut = useScene3d((s) => s.cut);
+  // The free cut set on this map only: one set on another map, at its heights, would cut this one away.
+  const cut = useScene3d((s) => cutOf(s, mapId));
   const towardCamera = useScene3d((s) => s.cutTowardCamera);
   const top = focusHere ? focusHere.cut : floor?.heights ? floor.heights[1] : cut;
   useEffect(() => {

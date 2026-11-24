@@ -192,6 +192,12 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.35.1
+
+          - **Cut above stays with its map.** A height set with **Cut above** in the 3D tools now belongs to the map it was set on. Before, it carried over to the next map, where at that map's own heights it could cut the whole model away and show nothing under **All**.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.35.0
 
           - **Put locations on a 3D map.** **Edit locations** now works in the 3D view: press the model and a location of your own goes there, at the height of the surface you pressed and on that floor. Drag one of yours to move it, or press **Move** and then the new spot. Parts cut away by a floor or a cut cannot be pressed. With a controller, A puts a location where the crosshair points. Undo works as on the 2D map.

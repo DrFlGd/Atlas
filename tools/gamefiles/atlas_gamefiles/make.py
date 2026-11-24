@@ -93,6 +93,8 @@ STEPS_3D = {"layout": 0.05, "geometry": 0.4, "floors": 0.1, "render": 0.3, "scen
 STEPS_MODELS = {"layout": 0.04, "geometry": 0.3, "models": 0.2, "floors": 0.06, "render": 0.25}
 STEPS_MODELS_3D = {"layout": 0.04, "geometry": 0.25, "models": 0.2, "floors": 0.06, "render": 0.25, "scene": 0.2}
 MODELS_TIME_LIMIT = 900.0  # seconds one area's models and textures may take in the file reader
+# The games whose own models and textures are read (3D look "Game models", the textured map styles).
+GAME_MODEL_GAMES = frozenset({DSR})
 LOOKS_3D = ("models", "collision")  # "3D look": the game's models (the default), or the collision
 SCENE_WORK = "scene-work"
 REMAKE_PREVIEWS = "previews-remake"
@@ -228,6 +230,20 @@ class MapMaker:
                 self.warn("3D maps were not made: the 3D builder (atlas-scene) that comes with the Map Maker is missing")
             else:
                 self.steps = STEPS_3D
+        # Only Dark Souls Remastered's own models are read for now: Bloodborne's textures are not read yet, and its
+        # models at full detail made 3D maps of gigabytes. Its maps keep the collision and the untextured styles.
+        wants_look = self.style.textured or (self.builder is not None and self.look_3d == "models")
+        if wants_look and profile.game not in GAME_MODEL_GAMES:
+            chosen = [f"the map style {self.style.label}"] if self.style.textured else []
+            if self.builder is not None and self.look_3d == "models":
+                chosen.append("the 3D look Game models")
+            self.style = fallback_style(self.style)
+            self.look_3d = "collision"
+            self.warn(
+                f"The game's own models and textures are read for Dark Souls Remastered only for now, so "
+                f"{' and '.join(chosen)} could not be used: the maps are drawn {self.style.label.lower()}"
+                + (" and the 3D maps show the collision" if self.builder is not None else "")
+            )
         if self.style.textured:
             drawer = self.builder or find_builder(self.scene_builder)
             self.drawer = drawer.resolve() if drawer is not None else None

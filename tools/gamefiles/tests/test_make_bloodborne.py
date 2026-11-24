@@ -98,6 +98,19 @@ def test_cuts_can_be_asked_for(bloodborne_folder: Path, tmp_path: Path) -> None:
     assert "navmeshForPassages" in ward["geometry"] and ward["geometry"]["navmeshForPassages"] is False
 
 
+def test_the_game_models_and_textured_styles_wait_for_dark_souls_remastered(bloodborne_folder: Path, tmp_path: Path) -> None:
+    # Bloodborne's own models are not read yet (no textures, and gigabytes at full detail): the map is drawn height
+    # shaded instead of textured, with one warning that says so, and no area is left out for it.
+    report, _ = make(bloodborne_folder, tmp_path / "out", tmp_path / "Maps", style="textured-outlines", make_3d=False)
+    (ward,) = report["areas"]
+    assert "models" not in ward and "mapStyleNote" not in ward
+    notes = [w for w in report["warnings"] if "Dark Souls Remastered only" in w]
+    assert notes == [
+        "The game's own models and textures are read for Dark Souls Remastered only for now, so the map style "
+        "Textured with outlines could not be used: the maps are drawn height shaded with outlines"
+    ]
+
+
 def test_other_versions_are_refused(bloodborne_folder: Path, tmp_path: Path) -> None:
     folder = tmp_path / "dump"
     shutil.copytree(bloodborne_folder, folder)

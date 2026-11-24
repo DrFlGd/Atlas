@@ -77,11 +77,25 @@ def load_msb(profile: GameProfile, area: Area, notes: list[str] | None = None) -
         try:
             with lenient_layout_reading(relaxed):
                 msb = msb_class.from_path(area.msb)
-        except Exception:
-            raise strict_error
+        except Exception as relaxed_error:
+            raise LayoutUnreadable(strict_error, relaxed_error) from relaxed_error
         if notes is not None:
             notes.append(lenient_note(relaxed))
         return msb
+
+
+def _short(error: BaseException, limit: int = 160) -> str:
+    """An error in one line, long runs of bytes cut short."""
+    text = " ".join(f"{type(error).__name__}: {error}".split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+class LayoutUnreadable(Exception):
+    """A map layout turned down by Soulstruct's checks and by the relaxed reading too: says why the second failed
+    first (the reason that matters), then the first."""
+
+    def __init__(self, strict: BaseException, relaxed: BaseException) -> None:
+        super().__init__(f"read with relaxed checks: {_short(relaxed)}; with Soulstruct's checks: {_short(strict)}")
 
 
 def lenient_note(relaxed: Counter[str]) -> str:
@@ -91,7 +105,15 @@ def lenient_note(relaxed: Counter[str]) -> str:
         (relaxed["dropped"], "with no field to hold them"),
     ]
     found = "; ".join(f"{count} {what}" for count, what in counts if count) or "none"
-    return f"read with relaxed checks, past values Atlas does not use: {found}"
+    note = f"read with relaxed checks, past values Atlas does not use: {found}"
+    left_out = sorted((key.split(":", 1)[1], count) for key, count in relaxed.items() if key.startswith("left out:"))
+    if left_out:
+        listed = ", ".join(f"{count} {kind}" for kind, count in left_out)
+        note += f"; entries that could not be read were left out: {listed}"
+        first = [key.split(":", 1)[1] for key in relaxed if key.startswith("first error:")]
+        if first:
+            note += f" (first: {first[0]})"
+    return note
 
 
 _INIT_FIELDS: dict[type, frozenset[str] | None] = {}
@@ -115,11 +137,13 @@ def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
     and a value Soulstruct reads but its entry type has no field for (Bloodborne parts' `instance_index`) is dropped.
     Every other check stays. Soulstruct 2.6 and constrata internals; if they differ, nothing is relaxed."""
     from constrata.metadata import BinaryMetadata
+    from soulstruct.base.maps.msb.core import MSB
     from soulstruct.base.maps.msb.msb_entry import MSBEntry
 
     original_validate = BinaryMetadata.__dict__.get("validate")
     original_kwargs = MSBEntry.__dict__.get("reader_to_entry_kwargs")
-    if original_validate is None or not isinstance(original_kwargs, classmethod):
+    original_unpack = MSB.__dict__.get("_unpack_entry")
+    if original_validate is None or not isinstance(original_kwargs, classmethod) or not isinstance(original_unpack, classmethod):
         yield
         return
 
@@ -152,13 +176,53 @@ def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
                 relaxed["dropped"] += 1
         return kwargs
 
+    def unpack_entry(cls: tp.Any, reader: tp.Any, supertype: str, entry_lists: dict[str, tp.Any]) -> None:
+        # An entry that cannot be read even so is left out, and a stand-in keeps its place in its supertype's list,
+        # so that the indices other entries use to refer to entries still point at the right ones.
+        offset = reader.position
+        try:
+            original_unpack.__func__(cls, reader, supertype, entry_lists)
+        except Exception as error:
+            kind = _supertype_word(supertype)
+            relaxed[f"left out:{kind}"] += 1
+            if not any(key.startswith("first error:") for key in relaxed):
+                relaxed[f"first error:{_short(error, 120)} (a {kind[:-1]} at byte {offset})"] = 1
+            entry_lists[supertype].append(_LeftOut(supertype))
+
     BinaryMetadata.validate = validate
     MSBEntry.reader_to_entry_kwargs = classmethod(reader_to_entry_kwargs)
+    MSB._unpack_entry = classmethod(unpack_entry)
     try:
         yield
     finally:
         BinaryMetadata.validate = original_validate
         MSBEntry.reader_to_entry_kwargs = original_kwargs
+        MSB._unpack_entry = original_unpack
+
+
+def _supertype_word(supertype: str) -> str:
+    upper = supertype.upper()
+    for prefix, word in (("MODEL", "models"), ("EVENT", "events"), ("POINT", "regions"), ("REGION", "regions"), ("PART", "parts")):
+        if upper.startswith(prefix):
+            return word
+    return "entries"
+
+
+class _LeftOut:
+    """Stands in for an entry the relaxed reading could not read: refers to nothing, and has no name or model."""
+
+    name = None
+    model = None
+
+    def __init__(self, supertype: str) -> None:
+        self.supertype = supertype
+        self.referring_entry_fields: list[tp.Any] = []
+
+    def indices_to_objects(self, entry_lists: tp.Any) -> None:
+        return None
+
+    def __bool__(self) -> bool:
+        return False
 
 
 def summarize(profile: GameProfile, area: Area, msb: tp.Any) -> MsbSummary:
