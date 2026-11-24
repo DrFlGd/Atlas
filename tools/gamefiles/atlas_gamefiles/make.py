@@ -3,8 +3,10 @@
 For each real area (debug maps skipped): read the map layout and the event script (markers, see world.py), read
 every collision file in the file reader process (and the navmesh: for automatic passages, or in place of collision
 when there is none), find the floors (cut heights, floors.py, or automatic passages, passages.py), draw each floor and cut it into tiles (render.py, tiles.py), and put each marker on its floor. With 3D
-maps on (the default), also make the area's 3D model with the Atlas scene builder (scene.py). Then write the pack
-(pack.py) into the shared maps folder, where Atlas finds it, and the report.
+maps on (the default), also make the area's 3D model with the Atlas scene builder (scene.py): from the game's own
+models with their textures (models.py, the 3D look "Game models"), or from its collision (the 3D look "Collision",
+and for any area whose models cannot be read). The textured map styles draw the floors from those models too: the
+builder draws them (`atlas-scene draw`), on the floors textured.py gives each triangle. Then write the pack (pack.py) into the shared maps folder, where Atlas finds it, and the report.
 
 Only the output folder and the maps folder are written to; the game folder is only read. The report holds counts,
 ids, heights, file names and error messages, and small preview pictures: no game text.
@@ -61,19 +63,37 @@ from .pack import (
     swap_area,
     write_pack_json,
 )
-from .render import BACKGROUND, compose, draw_layer, make_frame, map_style, preview_png, triangle_colours
+from .models import TexturedMesh, is_usable, load_mesh, summary as models_summary
+from .render import BACKGROUND, compose, draw_floor, fallback_style, make_frame, map_style, preview_png
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
-from .scene import BuilderFailed, check_pack, corner_colours, find_builder, floor_heights, raw_glb, run_builder
+from .scene import (
+    BuilderFailed,
+    check_pack,
+    corner_colours,
+    find_builder,
+    floor_heights,
+    raw_glb,
+    run_builder,
+    textured_order,
+    write_textured_glb,
+)
+from .textured import triangle_floors
 from .tiles import tile_format, write_pyramid
 from .worker import READER_LOG, ProcessRunner, Runner, SourceJob, clean_text
 from .world import AreaContent, extract_area
 
 ZIP_NAME = "atlas-make-report.zip"
+# The map's world x is the game's x, its y the game's z, and height the game's y (for the builder).
+SCENE_AXES = ["+x", "+z", "+y"]
 LOG_LIMIT = 200_000
 TIME_LIMIT = 300.0  # seconds one area's geometry may take in the file reader
-# Share of an area's progress for each step, without and with its 3D model.
+# Share of an area's progress for each step, without and with its 3D model, and with the game's models read.
 STEPS = {"layout": 0.05, "geometry": 0.45, "floors": 0.1, "render": 0.4}
 STEPS_3D = {"layout": 0.05, "geometry": 0.4, "floors": 0.1, "render": 0.3, "scene": 0.15}
+STEPS_MODELS = {"layout": 0.04, "geometry": 0.3, "models": 0.2, "floors": 0.06, "render": 0.25}
+STEPS_MODELS_3D = {"layout": 0.04, "geometry": 0.25, "models": 0.2, "floors": 0.06, "render": 0.25, "scene": 0.2}
+MODELS_TIME_LIMIT = 900.0  # seconds one area's models and textures may take in the file reader
+LOOKS_3D = ("models", "collision")  # "3D look": the game's models (the default), or the collision
 SCENE_WORK = "scene-work"
 REMAKE_PREVIEWS = "previews-remake"
 
@@ -105,6 +125,7 @@ class MapMaker:
         remake: str | None = None,
         style: str | None = None,
         floor_method: str | None = None,
+        look_3d: str | None = None,
     ):
         self.folder = Path(folder)
         self.out = Path(out)
@@ -121,6 +142,7 @@ class MapMaker:
         self.make_3d = make_3d
         self.scene_builder = scene_builder
         self.builder: Path | None = None
+        self.drawer: Path | None = None  # the builder, for drawing the textured map styles
         self.steps = STEPS
         # How floors are found when an area does not choose (config.floor_method): None for the config's.
         self.floor_method = floor_method if floor_method in ("passages", "cuts") else None
@@ -133,6 +155,9 @@ class MapMaker:
         # Making one area again (`mAA_BB`), in place of its map in the pack made before (see replace_area).
         self.remake = remake.lower()[:6] if remake else None
         self.preview_dir: Path | None = None
+        # What the 3D maps show: the game's models with their textures, or the collision (LOOKS_3D).
+        self.look_3d = look_3d if look_3d in LOOKS_3D else LOOKS_3D[0]
+        self.want_models = False
         # How the floors are drawn (render.MAP_STYLES); an unknown or unavailable style is refused here.
         try:
             self.style = map_style(style)
@@ -197,10 +222,19 @@ class MapMaker:
         fmt = tile_format(str(render_settings.get("tileFormat", "webp")))
         if self.make_3d:
             self.builder = find_builder(self.scene_builder)
+            if self.builder is not None:
+                self.builder = self.builder.resolve()
             if self.builder is None:
                 self.warn("3D maps were not made: the 3D builder (atlas-scene) that comes with the Map Maker is missing")
             else:
                 self.steps = STEPS_3D
+        if self.style.textured:
+            drawer = self.builder or find_builder(self.scene_builder)
+            self.drawer = drawer.resolve() if drawer is not None else None
+        # The game's models are read for the textured map styles, and for 3D maps with the look "Game models".
+        self.want_models = self.style.textured or (self.builder is not None and self.look_3d == "models")
+        if self.want_models:
+            self.steps = STEPS_MODELS_3D if self.builder is not None else STEPS_MODELS
 
         # Where the pack goes: refuse early, before any work, when the place is taken by a pack not ours.
         if self.maps_folder is not None:
@@ -273,6 +307,7 @@ class MapMaker:
                 "floorOverrides": self.own_overrides_report(),
                 "threeD": {
                     "asked": self.make_3d,
+                    "look": self.look_3d,
                     "builder": self.builder.name if self.builder else None,
                     "settings": config.get("scene", {}),
                 },
@@ -622,6 +657,12 @@ class MapMaker:
         if used is None:
             self.warn(f"{area.name}: no collision or navmesh could be read; the map shows markers only")
 
+        # The game's own models, with their textures and materials (models.py).
+        textured: TexturedMesh | None = None
+        models_reason: str | None = None
+        if self.want_models:
+            textured, entry["models"], models_reason = self.read_models(profile, root, area, world, key, say)
+
         # Floors.
         self.token.stop()
         say("floors", 0.0, f"finding floors in {len(mesh):,} triangles")
@@ -701,16 +742,43 @@ class MapMaker:
         layers_out: list[LayerOut] = []
         floor_entries = []
         assert self.staging is not None
+        style = self.style
+        fills: list[Path] | None = None
+        if style.textured:
+            why = f"the game's models could not be read ({models_reason or 'not read'})"
+            if textured is not None and is_usable(textured):
+                say("render", 0.0, "drawing the floors from the game's models")
+                fills, why = self.draw_textured(key, textured, plan, frame, mesh, len(floors), say)
+            if fills is None:
+                style = fallback_style(self.style)
+                entry["mapStyleNote"] = f"drawn {style.label.lower()}: {why}"
+                self.warn(f"{area.name}: {entry['mapStyleNote']}")
 
         def layers() -> tp.Iterator[tuple[int, tp.Any]]:
             for floor in floors:
                 chosen = np.flatnonzero(plan.triangle_floor == floor.index) if len(mesh) else np.zeros(0, dtype=np.int64)
                 tris = mesh[chosen]
-                colours = triangle_colours(tris, float(low), float(high), plan.flipped)
                 walls = plan.wall_lines[floor.index] if floor.index < len(plan.wall_lines) else np.zeros((0, 2, 2))
-                yield floor.index, draw_layer(frame, tris, colours, walls, self.style)
+                fill = None
+                if fills is not None and floor.index < len(fills):
+                    from PIL import Image
 
-        for done, (floor_index, picture) in enumerate(compose(frame, layers(), opacity)):
+                    with Image.open(fills[floor.index]) as drawn:
+                        fill = drawn.convert("RGBA")
+                yield floor.index, draw_floor(
+                    frame,
+                    style,
+                    tris,
+                    walls,
+                    index=floor.index,
+                    floor_range=(floor.low, floor.high),
+                    area_range=(float(low), float(high)),
+                    flipped=plan.flipped,
+                    fill=fill,
+                )
+
+        pictures = compose(frame, layers(), opacity)
+        for done, (floor_index, picture) in enumerate(pictures):
             self.token.stop()
             floor = floors[floor_index]
             say("render", done / len(floors), f"cutting {floor.name} into tiles")
@@ -755,7 +823,8 @@ class MapMaker:
         heights = None
         if self.builder is not None:
             scene, heights, entry["scene"] = self.make_scene(
-                area, key, mesh, owners, owner_names, plan, float(low), float(high), config, not_on_floor, say
+                area, key, mesh, owners, owner_names, plan, float(low), float(high), config, not_on_floor, say,
+                textured, models_reason,
             )
         elif self.make_3d:
             entry["scene"] = {"made": False, "reason": "the 3D builder is missing"}
@@ -763,7 +832,9 @@ class MapMaker:
         by_category = Counter(m.category for m in world.markers)
         entry["frame"] = frame.to_report()
         entry["floorPlan"] = plan.report
-        entry["mapStyle"] = self.style.id
+        entry["mapStyle"] = style.id
+        if style.id != self.style.id:
+            entry["mapStyleAsked"] = self.style.id
         entry["mainFloor"] = main
         entry["floors"] = floor_entries
         entry["markers"] = {
@@ -775,9 +846,127 @@ class MapMaker:
             "placeNames": len(place_names),
         }
         entry["seconds"] = round(time.monotonic() - started, 1)
+        if textured is not None:
+            shutil.rmtree(textured.folder, ignore_errors=True)
+            del textured
         self.emit_area(entry, index, count)
         area_out = AreaOut(key, area.id, area.name, frame, layers_out, main, world.markers, place_names, scene, heights)
         return entry, area_out
+
+    def draw_textured(
+        self,
+        key: str,
+        textured: TexturedMesh,
+        plan: tp.Any,
+        frame: tp.Any,
+        collision: np.ndarray,
+        count: int,
+        say: tp.Callable[[str, float, str], None],
+    ) -> tuple[list[Path] | None, str]:
+        """Each floor drawn from above from the game's models, by the builder (`atlas-scene draw`, see textured.py):
+        the pictures, lowest floor first; or None and why not."""
+        if self.drawer is None:
+            return None, "the 3D builder (atlas-scene) that draws them is missing"
+        work = textured.folder
+        try:
+            glb = self.textured_glb(textured)
+            floors = triangle_floors(textured, plan, frame, collision, self.token.stop)[textured_order(textured)]
+            floors.astype("<i2").tofile(work / "floors.bin")
+        except OSError as error:
+            return None, f"the floors of the models could not be written ({type(error).__name__}: {error})"
+        except BuilderFailed as error:
+            return None, str(error)
+        job = {
+            "input": str(glb.resolve()),
+            "output": "drawn",
+            "options": {"axes": SCENE_AXES, "maxTriangles": len(textured) + 1},
+            "frame": {"xMin": frame.x_min, "zMax": frame.z_max, "scale": frame.scale, "width": frame.width, "height": frame.height},
+            "floors": "floors.bin",
+            "count": count,
+        }
+        try:
+            done = run_builder(
+                self.drawer, job, work, "draw", lambda fraction, text: say("render", 0.0, "drawing the floors from the game's models"),
+                self.token.stop, command="draw",
+            )
+        except BuilderFailed as error:
+            return None, f"the floors could not be drawn from the game's models ({error})"
+        files = [work / "drawn" / str(name) for name in done.get("files", [])]
+        if len(files) != count or not all(f.is_file() for f in files):
+            return None, "the builder drew no picture of some floors"
+        return files, ""
+
+    def textured_glb(self, textured: TexturedMesh) -> Path:
+        """The game's models as a raw glTF binary file (scene.write_textured_glb), written once into their work
+        folder, for drawing the floors and for the 3D map."""
+        glb = textured.folder / "models.glb"
+        if not glb.is_file():
+            try:
+                write_textured_glb(textured, glb)
+            except OSError as error:
+                glb.unlink(missing_ok=True)
+                raise BuilderFailed(f"the game's models could not be written ({type(error).__name__}: {error})") from error
+        return glb
+
+    def read_models(
+        self,
+        profile: GameProfile,
+        root: Path,
+        area: Area,
+        world: AreaContent,
+        key: str,
+        say: tp.Callable[[str, float, str], None],
+    ) -> tuple[TexturedMesh | None, dict[str, tp.Any], str | None]:
+        """The area's visible models with their textures, read in the file reader process (models.py): the mesh
+        (None when nothing could be read), the report entry, and why there is none."""
+        self.token.stop()
+        say("models", 0.0, "reading the game's models and textures")
+        work = self.out / SCENE_WORK / f"{key.lower()}-models"
+        shutil.rmtree(work, ignore_errors=True)
+        work.parent.mkdir(parents=True, exist_ok=True)
+        job = SourceJob(
+            "models",
+            profile.game,
+            area,
+            root,
+            {},
+            preview_limit=0,
+            part_names=world.piece_names,
+            pieces=world.pieces,
+            output=str(work),
+            time_limit=MODELS_TIME_LIMIT,
+        )
+        try:
+            result, _ = self.runner.run(job, lambda within, text: say("models", within, text), self.token)
+        except Cancelled:
+            raise
+        except Exception as error:
+            result = SourceResult("models", status="failed")
+            result.add_error(error)
+        entry = {**source_summary(result), **result.data}
+        mesh: TexturedMesh | None = None
+        reason: str | None = None
+        if result.status in ("ok", "partial") and (work / "models.npz").is_file():
+            try:
+                mesh = load_mesh(work)
+            except (OSError, ValueError, KeyError) as error:
+                reason = f"what was read could not be loaded ({type(error).__name__}: {error})"
+        if mesh is not None and not is_usable(mesh):
+            mesh = None
+            reason = "no triangle of the models could be placed"
+        if mesh is None:
+            shutil.rmtree(work, ignore_errors=True)
+            if reason is None:
+                if result.status == "timed-out":
+                    reason = f"reading them was stopped after {result.time_limit:g} s"
+                elif result.status == "missing":
+                    reason = result.note or "none were found"
+                else:
+                    reason = (result.errors[0] if result.errors else None) or result.note or f"reading them {result.status}"
+            entry["reason"] = reason
+        else:
+            entry["summary"] = models_summary(result.data)
+        return mesh, entry, reason
 
     def make_scene(
         self,
@@ -792,58 +981,66 @@ class MapMaker:
         config: dict[str, tp.Any],
         not_on_floor: list[dict[str, tp.Any]],
         say: tp.Callable[[str, float, str], None],
+        textured: TexturedMesh | None = None,
+        models_reason: str | None = None,
     ) -> tuple[dict[str, tp.Any] | None, list[list[float]] | None, dict[str, tp.Any]]:
         """The area's 3D model, through the scene builder: its scene, its floors' heights (None without storeys)
-        and its report entry. A model that cannot be made leaves the area in 2D, with a warning."""
+        and its report entry. With the 3D look "Game models", from the game's models and their textures (textures
+        kept at their own size at the finest level); when those cannot be read or built, from the collision, and
+        the entry says why (`lookNote`). A model that cannot be made leaves the area in 2D, with a warning."""
         assert self.builder is not None and self.staging is not None
         started = time.monotonic()
-        entry: dict[str, tp.Any] = {"made": False, "trianglesBefore": int(len(mesh))}
-        if not len(mesh):
-            entry["reason"] = "no geometry was read"
-            return None, None, entry
         settings = config.get("scene", {}) if isinstance(config.get("scene"), dict) else {}
-        say("scene", 0.0, f"making the 3D model of {len(mesh):,} triangles")
-        work = self.out / SCENE_WORK
-        work.mkdir(exist_ok=True)
-        raw = work / f"{key}.glb"
-        try:
-            colours = corner_colours(mesh, low, high, plan.flipped)
-            raw.write_bytes(raw_glb(mesh, colours, owners, owner_names, plan.flipped))
-            del colours
-            options: dict[str, tp.Any] = {
-                "folder": f"scene/{key.lower()}",
-                # The map's world x is the game's x, its y the game's z, and height the game's y.
-                "axes": ["+x", "+z", "+y"],
-                "drop": [str(p) for p in settings.get("drop", []) if isinstance(p, str)],
-            }
-            for name in ("cellSize", "cellTriangles", "levels", "creaseAngle", "sky"):
-                if name in settings:
-                    options[name] = settings[name]
-            job = {"input": raw.name, "pack": str(self.staging.resolve()), "options": options}
-            done = run_builder(
-                self.builder,
-                job,
-                work,
-                key,
-                lambda fraction, text: say("scene", fraction, f"3D model: {text}"),
-                self.token.stop,
-            )
-        except BuilderFailed as error:
-            entry["reason"] = str(error)
-            self.warn(f"{area.name}: the 3D model was not made ({error}); the map stays 2D")
-            return None, None, entry
-        finally:
-            for leftover in (raw, work / f"{key}.job.json"):
-                leftover.unlink(missing_ok=True)
+        entry: dict[str, tp.Any] = {"made": False, "trianglesBefore": int(len(mesh))}
+        done: dict[str, tp.Any] | None = None
+        note: str | None = None
+        look = "collision"
+        if self.look_3d == "models":
+            if textured is not None and is_usable(textured):
+                model_settings = settings.get("models") if isinstance(settings.get("models"), dict) else {}
+                say("scene", 0.0, f"making the 3D model of the game's models, {len(textured):,} triangles")
+                try:
+                    done = self.run_scene(
+                        key, model_settings, None, say, {"textures": {"mode": "keep"}}, raw_file=self.textured_glb(textured)
+                    )
+                    look = "models"
+                    entry["trianglesBefore"] = int(len(textured))
+                except BuilderFailed as error:
+                    note = f"the 3D model of the game's models could not be made ({error})"
+            else:
+                note = f"the game's models could not be read ({models_reason or 'not read'})"
+        if done is None:
+            if not len(mesh):
+                entry["reason"] = "no geometry was read"
+                return None, None, entry
+            if note:
+                entry["lookNote"] = note
+                self.warn(f"{area.name}: the 3D map shows the collision: {note}")
+            say("scene", 0.0, f"making the 3D model of {len(mesh):,} triangles")
+
+            def write_collision(raw: Path) -> None:
+                colours = corner_colours(mesh, low, high, plan.flipped)
+                raw.write_bytes(raw_glb(mesh, colours, owners, owner_names, plan.flipped))
+
+            try:
+                done = self.run_scene(key, settings, write_collision, say)
+            except BuilderFailed as error:
+                entry["reason"] = str(error)
+                self.warn(f"{area.name}: the 3D model was not made ({error}); the map stays 2D")
+                return None, None, entry
         built = done.get("report", {})
         scene = done.get("scene")
         if plan.method == "passages":
             heights = [list(h) for h in plan.heights] if plan.heights and len(plan.heights) >= 2 else None
         else:
-            heights = floor_heights(plan.cuts, len(plan.floors), float(mesh[:, :, 1].min()), float(mesh[:, :, 1].max()))
+            ys = [float(mesh[:, :, 1].min()), float(mesh[:, :, 1].max())] if len(mesh) else []
+            if look == "models" and textured is not None:
+                ys += [float(textured.triangles[:, :, 1].min()), float(textured.triangles[:, :, 1].max())]
+            heights = floor_heights(plan.cuts, len(plan.floors), min(ys), max(ys)) if ys else None
         entry.update(
             {
                 "made": True,
+                "look": look,
                 "trianglesAfter": built.get("triangles"),
                 "trianglesDropped": built.get("trianglesDropped"),
                 "trianglesCleaned": built.get("trianglesCleaned"),
@@ -860,7 +1057,59 @@ class MapMaker:
                 "warnings": built.get("warnings", []),
             }
         )
+        if look == "models":
+            entry["textures"] = {
+                "kept": built.get("texturesKept"),
+                "leftOut": built.get("texturesLeftOut"),
+                "bytes": built.get("textureBytes"),
+                "largestCellBytes": max((c.get("bytes", 0) for c in built.get("cellTextures", []) if c.get("level") == 0), default=0),
+            }
         return scene, heights, entry
+
+    def run_scene(
+        self,
+        key: str,
+        settings: dict[str, tp.Any],
+        write_raw: tp.Callable[[Path], tp.Any] | None,
+        say: tp.Callable[[str, float, str], None],
+        extra: dict[str, tp.Any] | None = None,
+        raw_file: Path | None = None,
+    ) -> dict[str, tp.Any]:
+        """Writes the raw model with `write_raw` (or takes `raw_file`, written already and left in place) and builds
+        it into the pack's `scene/<area>/`; the builder's `done` line. BuilderFailed when it cannot."""
+        assert self.builder is not None and self.staging is not None
+        work = self.out / SCENE_WORK
+        work.mkdir(exist_ok=True)
+        raw = work / f"{key}.glb"
+        try:
+            if raw_file is None:
+                assert write_raw is not None
+                write_raw(raw)
+            options: dict[str, tp.Any] = {
+                "folder": f"scene/{key.lower()}",
+                "axes": SCENE_AXES,
+                "drop": [str(p) for p in settings.get("drop", []) if isinstance(p, str)],
+                **(extra or {}),
+            }
+            for name in ("cellSize", "cellTriangles", "levels", "creaseAngle", "sky"):
+                if name in settings:
+                    options[name] = settings[name]
+            if isinstance(settings.get("textures"), dict) and "textures" in options:
+                options["textures"] = {**options["textures"], **settings["textures"], "mode": "keep"}
+            job = {"input": str(raw_file.resolve()) if raw_file is not None else raw.name, "pack": str(self.staging.resolve()), "options": options}
+            return run_builder(
+                self.builder,
+                job,
+                work,
+                key,
+                lambda fraction, text: say("scene", fraction, f"3D model: {text}"),
+                self.token.stop,
+            )
+        except OSError as error:
+            raise BuilderFailed(f"the raw model could not be written ({type(error).__name__}: {error})") from error
+        finally:
+            for leftover in (raw, work / f"{key}.job.json"):
+                leftover.unlink(missing_ok=True)
 
     def emit_area(self, entry: dict[str, tp.Any], index: int, count: int) -> None:
         geometry = entry.get("geometry", {})
@@ -1061,6 +1310,7 @@ def scene_summary(areas: list[dict[str, tp.Any]]) -> dict[str, tp.Any] | None:
         "bytes": sum(s.get("bytes") or 0 for s in made),
         "seconds": round(sum(s.get("seconds") or 0 for s in made), 1),
         "noSurfaceUnder": sum(s.get("noSurfaceUnder") or 0 for s in made),
+        "looks": dict(Counter(s.get("look", "collision") for s in made)),
     }
 
 

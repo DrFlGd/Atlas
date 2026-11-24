@@ -201,6 +201,11 @@
   color: var(--atlas-accent);
 }
 
+.scene-tool[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .scene-switch-button:hover:not(:disabled, [aria-pressed='true']),
 .scene-floor:hover:not([aria-pressed='true']),
 .scene-tool:hover {

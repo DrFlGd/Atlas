@@ -101,6 +101,8 @@ class SourceResult:
     # placed it.
     owners: list[np.ndarray] = field(default_factory=list, repr=False)
     owner_names: list[str] = field(default_factory=list)
+    # What a source says beyond the counts above (the game's models: models.py), for the report.
+    data: dict[str, tp.Any] = field(default_factory=dict)
 
     def add_error(self, error: BaseException | str) -> None:
         message = error if isinstance(error, str) else f"{type(error).__name__}: {error}"

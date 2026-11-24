@@ -5,7 +5,7 @@
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
                     [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
-                    [--no-3d] [--scene-builder <atlas-scene program>]
+                    [--no-3d] [--look-3d models|collision] [--scene-builder <atlas-scene program>]
     atlas-gamefiles make-model <model file or level export> --out <output folder> [--maps-folder <folder>]
                     [--stdin-cancel] [--name <name>] [--title <title>] [--up +y|+z|-y|-z|+x|-x]
                     [--scale <metres per unit>] [--textures keep|plain] [--double-sided auto|yes|no]
@@ -14,6 +14,8 @@
                     [--assets <export folder>] [--clutter <m>] [--keep-hidden] [--scene-builder <program>]
     atlas-gamefiles inspect-level <level export> [--assets <export folder>] [--clutter <m>] [--keep-hidden]
                     [--max-triangles <n>] [--scene-builder <atlas-scene program>]
+    atlas-gamefiles redraw <pack folder> --out <output folder> [--map-style <style>] [--floor-overrides <file>]
+                    [--floor-method passages|cuts] [--scene-builder <atlas-scene program>] [--stdin-cancel]
     atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB, or model>
     atlas-gamefiles --version
 
@@ -26,7 +28,9 @@ A level export is the `.json` of an Unreal Engine level saved by FModel or a Uni
 `inspect-level` puts it together and answers with one `inspected` line as `atlas-scene inspect` does, with the
 level's report (`level`). `make --remake` makes one area again in place of its map in the pack made before into the same output folder; an
 `error` it cannot start with has a `code` (see make.MakeError). `floor-views` answers the Adjust floors panel's
-requests, one JSON line each way (see floorviews.py).
+requests, one JSON line each way (see floorviews.py). `redraw` draws every 2D floor of a map pack again from the
+pack's own 3D models, with no game files (see redraw.py): `start`, `maps`, `progress`, a `map` line per map (drawn
+again, or why not), `warning`, then `done`, `cancelled` or `error`.
 """
 
 from __future__ import annotations
@@ -132,8 +136,17 @@ def parser() -> argparse.ArgumentParser:
         "--map-style",
         default=None,
         metavar="STYLE",
-        help="how the floors are drawn: shaded (by height, the default) or outlines (by height, with the walls and "
-        "the edges of the walkable floor as clear lines); textured and textured-outlines are not available yet",
+        help="how the floors are drawn: shaded (by height, the default), outlines (by height, with the walls and "
+        "the edges of the walkable floor as clear lines), floors (each floor in its own colour, shaded by height "
+        "within it), textured (from the game's own models and textures) or textured-outlines (the same, with the "
+        "outlines); an area whose models cannot be read is drawn by height",
+    )
+    make.add_argument(
+        "--look-3d",
+        default=None,
+        choices=("models", "collision"),
+        help="what the 3D maps show: models (the game's own models with their textures, the default; an area whose "
+        "models cannot be read gets its collision) or collision (the ground and walls, coloured by height)",
     )
     make.add_argument(
         "--floor-method",
@@ -156,6 +169,18 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         help="seconds after which an area's geometry still being read is stopped (default 300)",
     )
+    again = commands.add_parser(
+        "redraw", help="draw every 2D floor of a map pack again from its own 3D models (no game files needed)"
+    )
+    again.add_argument("pack", type=Path, help="the map pack's folder (in the Atlas maps folder)")
+    again.add_argument("--out", type=Path, required=True, help="where to write report.json")
+    again.add_argument(
+        "--map-style", default=None, metavar="STYLE", help="how the floors are drawn, as for make-model (the textured styles too)"
+    )
+    again.add_argument("--floor-overrides", type=Path, default=None, help="the player's own floor cuts, as for make")
+    again.add_argument("--floor-method", default=None, choices=("passages", "cuts"), help="as for make")
+    again.add_argument("--scene-builder", type=Path, default=None, help="the 3D builder program, as for make")
+    again.add_argument("--stdin-cancel", action="store_true", help="as for check")
     model = commands.add_parser("make-model", help="make an Atlas map pack from a 3D model file (glTF, OBJ, STL, PLY)")
     model.add_argument(
         "model", type=Path, help="the model file (.glb, .gltf, .obj, .stl, .ply, .psk), or a level export (.json of FModel, .unity)"
@@ -186,7 +211,7 @@ def parser() -> argparse.ArgumentParser:
     model.add_argument("--cut-below", type=float, default=None, help="ground area: each floor is cut this far below it (m, 1.5)")
     add_level_options(model)
     model.add_argument("--max-triangles", type=int, default=None, help="refuse a model of more triangles (default 5,000,000)")
-    model.add_argument("--map-style", default=None, metavar="STYLE", help="shaded, outlines, textured or textured-outlines")
+    model.add_argument("--map-style", default=None, metavar="STYLE", help="shaded, outlines, floors, textured or textured-outlines")
     model.add_argument("--floor-overrides", type=Path, default=None, help="as for make (under the pack id, area model)")
     model.add_argument("--remake", action="store_true", help="make the map again in place of the one made into this output folder")
     model.add_argument("--scene-builder", type=Path, default=None, help="as for make")
@@ -254,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
             traceback.print_exc()
             events.emit("error", message=f"{type(error).__name__}: {error}")
             return EXIT_ERROR
+    if args.command == "redraw":
+        return run_redraw(args, events, token)
     if args.command == "make-model":
         return run_make_model(args, events, token)
     if args.command == "inspect-level":
@@ -310,6 +337,7 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             remake=args.remake,
             style=args.map_style,
             floor_method=args.floor_method,
+            look_3d=args.look_3d,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
@@ -325,6 +353,34 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
         events.emit("error", message=f"{type(error).__name__}: {error}")
         return EXIT_ERROR
     return EXIT_OK
+
+
+def run_redraw(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> int:
+    from .redraw import RedrawError, Redrawer
+
+    try:
+        Redrawer(
+            args.pack,
+            args.out,
+            events,
+            token=token,
+            style=args.map_style,
+            floor_overrides_file=args.floor_overrides,
+            floor_method=args.floor_method,
+            scene_builder=args.scene_builder,
+        ).run()
+    except Cancelled:
+        events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
+        return EXIT_CANCELLED
+    except RedrawError as error:
+        events.emit("error", message=str(error))
+        return EXIT_USAGE
+    except Exception as error:
+        traceback.print_exc()
+        events.emit("error", message=f"{type(error).__name__}: {error}")
+        return EXIT_ERROR
+    return EXIT_OK
+
 
 
 def run_make_model(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> int:

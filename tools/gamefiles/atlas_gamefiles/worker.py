@@ -56,6 +56,7 @@ from .geometry import (
     read_map_pieces,
     read_navmesh,
 )
+from .models import Pieces, read_map_models
 from .reader import STAGES
 
 # Defaults, overridable on the command line (see cli.py).
@@ -69,8 +70,13 @@ MESH_PREFIX = "reader-mesh-"
 LOG_TAIL_LINES = 25
 
 # How each source names what it reads, for the progress lines.
-FILE_WORDS = {"collision": "collision file", "navmesh": "navmesh file", "mapPieces": "model"}
-OPEN_WORDS = {"collision": "collision files", "navmesh": "navmesh files", "mapPieces": "map piece models"}
+FILE_WORDS = {"collision": "collision file", "navmesh": "navmesh file", "mapPieces": "model", "models": "model"}
+OPEN_WORDS = {
+    "collision": "collision files",
+    "navmesh": "navmesh files",
+    "mapPieces": "map piece models",
+    "models": "map models and textures",
+}
 
 Say = tp.Callable[[float, str], None]
 """Progress for the check: how far through the source (0 to 1), and what is happening."""
@@ -80,7 +86,7 @@ Say = tp.Callable[[float, str], None]
 class SourceJob:
     """One geometry source of one area, as the reader reads it."""
 
-    source: str  # collision | navmesh | mapPieces
+    source: str  # collision | navmesh | mapPieces | models
     game: str
     area: Area
     root: Path
@@ -90,6 +96,11 @@ class SourceJob:
     preview_limit: int = PREVIEW_LIMIT  # triangles sent back at most (0: all of them)
     # For maps: the names of the parts that place each model, so each triangle can say which part it came from.
     part_names: PartNames = dataclasses.field(default_factory=dict)
+    # For the game's models (models.py): each map piece model's placements (position, rotation, scale), the folder
+    # the reader writes them into, and a time limit of their own (0: the runner's).
+    pieces: Pieces = dataclasses.field(default_factory=dict)
+    output: str = ""
+    time_limit: float = 0.0
 
 
 def cap_triangles(mesh: np.ndarray, limit: int) -> np.ndarray:
@@ -109,6 +120,10 @@ def execute(job: SourceJob, feedback: Feedback) -> tuple[SourceResult, np.ndarra
         result = read_navmesh(profile, job.area, job.root, job.instances, feedback, job.sample, job.budget, names)
     elif job.source == "mapPieces":
         result = read_map_pieces(profile, job.area, job.root, feedback, job.sample, job.budget)
+    elif job.source == "models":
+        result = read_map_models(
+            profile, job.area, job.root, job.pieces, feedback, Path(job.output), job.part_names, job.budget
+        )
     else:
         raise ValueError(f"unknown geometry source {job.source!r}")
     mesh = result.triangles_array()
@@ -149,6 +164,9 @@ def job_to_dict(job: SourceJob) -> dict[str, tp.Any]:
         "budget": job.budget,
         "previewLimit": job.preview_limit,
         "partNames": job.part_names,
+        "pieces": {model: [list(map(list, placed)) for placed in places] for model, places in job.pieces.items()},
+        "output": job.output,
+        "timeLimit": job.time_limit,
     }
 
 
@@ -172,6 +190,12 @@ def job_from_dict(data: dict[str, tp.Any]) -> SourceJob:
         budget=float(data["budget"]),
         preview_limit=int(data["previewLimit"]),
         part_names={model: [str(n) for n in names] for model, names in (data.get("partNames") or {}).items()},
+        pieces={
+            model: [tuple(tuple(float(v) for v in vector) for vector in placed) for placed in places]  # type: ignore[misc]
+            for model, places in (data.get("pieces") or {}).items()
+        },
+        output=str(data.get("output") or ""),
+        time_limit=float(data.get("timeLimit") or 0.0),
     )
 
 
@@ -568,8 +592,9 @@ class ProcessRunner:
             data = job_to_dict(job)
             data["meshFile"] = str(mesh_file)
             data["ownersFile"] = str(owners_file)
-            if self.time_limit >= 2:  # the log gets the reader's stack shortly before the time limit
-                data["dumpAfter"] = max(self.time_limit - 10, self.time_limit * 0.75)
+            limit = job.time_limit if job.time_limit > 0 else self.time_limit
+            if limit >= 2:  # the log gets the reader's stack shortly before the time limit
+                data["dumpAfter"] = max(limit - 10, limit * 0.75)
             assert self.process is not None and self.process.stdin is not None
             self.process.stdin.write((json.dumps(data) + "\n").encode())
             self.process.stdin.flush()
@@ -584,7 +609,8 @@ class ProcessRunner:
             result.add_error(f"The file reader process could not be reached: {error}")
             return result, empty
         watch.started = watch.since = time.monotonic()
-        deadline = watch.started + self.time_limit if self.time_limit > 0 else None
+        limit = job.time_limit if job.time_limit > 0 else self.time_limit
+        deadline = watch.started + limit if limit > 0 else None
         try:
             while True:
                 try:
@@ -601,7 +627,7 @@ class ProcessRunner:
                 if message is None:
                     self.kill()
                     self.troubles += 1
-                    return watch.timed_out(self.time_limit), empty
+                    return watch.timed_out(limit), empty
                 if message[0] == "result":
                     result = result_from_dict(message[1])
                     mesh = empty

@@ -1,5 +1,5 @@
 //! The Map Maker's settings, in `settings.json` in the app's config folder: the last game folder, whether Make
-//! map also makes 3D maps, the map style, how floors are found, the last make (so its report, and Adjust floors,
+//! map also makes 3D maps and their look, the map style, how floors are found, the last make (so its report, and Adjust floors,
 //! are there when the app opens again; for a map made from a 3D model, the model file and how it was set up, so it
 //! can be read again), the folder a model was last chosen in, and per area how a picture to compare with was laid
 //! over its map.
@@ -17,6 +17,9 @@ pub struct Settings {
     /// "Also make 3D maps"; on when never chosen.
     #[serde(rename = "make3d", skip_serializing_if = "Option::is_none")]
     pub make_3d: Option<bool>,
+    /// "3D look" (LOOKS_3D): what the 3D maps are made from; "models" (the game's own models) when never chosen.
+    #[serde(rename = "look3d", skip_serializing_if = "Option::is_none")]
+    pub look_3d: Option<String>,
     /// "Map style" (the helper's render.MAP_STYLES): how the floors are drawn; "shaded" when never chosen.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_style: Option<String>,
@@ -74,7 +77,7 @@ pub struct ModelSetup {
     /// "Allow very large models": up to LARGEST_TRIANGLES triangles instead of DEFAULT_TRIANGLES.
     #[serde(default)]
     pub allow_large: bool,
-    /// How the floors are drawn (MODEL_MAP_STYLES).
+    /// How the floors are drawn (MAP_STYLES).
     pub map_style: String,
     /// Ground area: each floor is cut this far below it (metres); `None` for the helper's own (1.5).
     #[serde(default)]
@@ -107,8 +110,6 @@ pub const UNITS: [&str; 6] = [
     "feet",
     "custom",
 ];
-/// A model is drawn in its own textures and colours, so the textured styles can be chosen for it.
-pub const MODEL_MAP_STYLES: [&str; 4] = ["shaded", "outlines", "textured", "textured-outlines"];
 const MODEL_FLOORS: [&str; 3] = ["ground", "passages", "none"];
 const MAX_NAME: usize = 80;
 
@@ -149,7 +150,7 @@ impl ModelSetup {
             "a choice of sides",
         )?;
         choice(&self.floors, &MODEL_FLOORS, "a way of finding floors")?;
-        choice(&self.map_style, &MODEL_MAP_STYLES, "a map style")?;
+        choice(&self.map_style, &MAP_STYLES, "a map style")?;
         if !(self.scale.is_finite() && (1e-6..=1e6).contains(&self.scale)) {
             return Err(
                 "The scale must be a number above 0.000001 and up to 1,000,000.".to_owned(),
@@ -185,6 +186,14 @@ impl ModelSetup {
 impl Settings {
     pub fn make_3d(&self) -> bool {
         self.make_3d.unwrap_or(true)
+    }
+
+    /// "3D look": `models` or `collision`.
+    pub fn look_3d(&self) -> &str {
+        self.look_3d
+            .as_deref()
+            .filter(|look| is_look_3d(look))
+            .unwrap_or(DEFAULT_LOOK_3D)
     }
 
     pub fn map_style(&self) -> &str {
@@ -302,12 +311,28 @@ pub fn clean_alignment(value: &Value) -> Option<Value> {
     }))
 }
 
-/// The map styles the helper can draw now (the textured ones need the game's textures, not read yet).
-pub const MAP_STYLES: [&str; 2] = ["shaded", "outlines"];
+/// The map styles the helper draws (render.MAP_STYLES). The textured ones draw the game's own models (or a 3D
+/// model's) in their textures; a game area whose models cannot be read is height shaded.
+pub const MAP_STYLES: [&str; 5] = [
+    "shaded",
+    "outlines",
+    "floors",
+    "textured",
+    "textured-outlines",
+];
 pub const DEFAULT_MAP_STYLE: &str = "shaded";
 
 pub fn is_map_style(style: &str) -> bool {
     MAP_STYLES.contains(&style)
+}
+
+/// What the 3D maps are made from (the helper's `--look-3d`): the game's own models with their textures, or the
+/// collision. An area whose models cannot be read is made from its collision.
+pub const LOOKS_3D: [&str; 2] = ["models", "collision"];
+pub const DEFAULT_LOOK_3D: &str = "models";
+
+pub fn is_look_3d(look: &str) -> bool {
+    LOOKS_3D.contains(&look)
 }
 
 pub fn read(file: &Path) -> Settings {
@@ -352,9 +377,15 @@ mod tests {
         assert_eq!(read(&file), Settings::default());
         assert!(read(&file).make_3d(), "3D maps are on until turned off");
         assert_eq!(read(&file).map_style(), "shaded");
+        assert_eq!(
+            read(&file).look_3d(),
+            "models",
+            "the game's models until chosen otherwise"
+        );
         let mut settings = Settings {
             last_folder: Some(r"C:\Games\DARK SOULS REMASTERED".into()),
             make_3d: Some(false),
+            look_3d: Some("collision".into()),
             map_style: Some("outlines".into()),
             floor_method: Some("passages".into()),
             last_make: Some(LastMake {
@@ -375,6 +406,7 @@ mod tests {
         assert_eq!(read(&file), settings);
         assert!(!read(&file).make_3d());
         assert_eq!(read(&file).map_style(), "outlines");
+        assert_eq!(read(&file).look_3d(), "collision");
         assert_eq!(read(&file).floor_method(), Some("passages"));
         let compared = read(&file).compare();
         assert_eq!(
@@ -399,15 +431,18 @@ mod tests {
                 .is_empty(),
             "no picture, nothing kept"
         );
-        let unknown = Settings {
+        let textured = Settings {
             map_style: Some("textured".into()),
             ..Settings::default()
         };
-        assert_eq!(
-            unknown.map_style(),
-            "shaded",
-            "not a style that can be drawn yet"
-        );
+        assert_eq!(textured.map_style(), "textured");
+        let unknown = Settings {
+            map_style: Some("watercolour".into()),
+            look_3d: Some("wireframe".into()),
+            ..Settings::default()
+        };
+        assert_eq!(unknown.map_style(), "shaded", "not a style there is");
+        assert_eq!(unknown.look_3d(), "models", "not a look there is");
         let text = fs::read_to_string(&file).unwrap();
         assert!(
             text.contains("lastFolder")

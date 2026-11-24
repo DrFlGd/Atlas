@@ -429,7 +429,7 @@ def test_swap_area_puts_everything_back_when_it_fails(tmp_path: Path, monkeypatc
 # Map styles.
 
 
-def test_map_styles_draw_outlines_and_refuse_textures(dsr_map_folder: Path, tmp_path: Path) -> None:
+def test_map_styles_draw_outlines_and_refuse_unknown_ones(dsr_map_folder: Path, tmp_path: Path) -> None:
     from atlas_gamefiles.render import MAP_STYLES, OUTLINE, Frame, draw_layer, map_style
 
     triangles = np.array(fixtures.quad(0, 10, 0, 10, 0.0), dtype=np.float32)
@@ -441,14 +441,15 @@ def test_map_styles_draw_outlines_and_refuse_textures(dsr_map_folder: Path, tmp_
     is_outline = lambda picture: (picture[:, :, :3] == OUTLINE).all(axis=2)  # noqa: E731
     assert not is_outline(shaded).any() and is_outline(outlined).sum() > 100
     assert map_style(None).id == "shaded"
-    for name in ("textured", "textured-outlines", "watercolour"):
-        with pytest.raises(ValueError):
-            map_style(name)
-    assert not MAP_STYLES["textured"].available and MAP_STYLES["textured"].note
+    with pytest.raises(ValueError):
+        map_style("watercolour")
+    # The textured styles can be chosen (test_models.py draws them).
+    assert MAP_STYLES["textured"].available and MAP_STYLES["textured-outlines"].outlines
+    assert map_style("textured-outlines").textured
 
     with pytest.raises(MakeError) as refused:
-        MapMaker(dsr_map_folder, tmp_path / "out", Events(io.StringIO()), style="textured")
-    assert refused.value.code == "map-style" and "textures" in str(refused.value)
+        MapMaker(dsr_map_folder, tmp_path / "out", Events(io.StringIO()), style="watercolour")
+    assert refused.value.code == "map-style" and "watercolour" in str(refused.value)
     report, _ = make(dsr_map_folder, tmp_path / "out", tmp_path / "Maps", only_areas=["m15_01"], style="outlines")
     assert report["options"]["mapStyle"] == "outlines" and area(report, "m15_01")["mapStyle"] == "outlines"
 

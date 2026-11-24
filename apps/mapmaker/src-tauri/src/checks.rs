@@ -14,6 +14,10 @@
 //! shown all along, and stays when the run fails or is cancelled (the helper leaves the pack and the report as
 //! they were then). The last make's folders are kept in the settings, and its report is shown again when the app
 //! opens (`restore`).
+//!
+//! Draw all areas again (`redraw <pack folder>`) needs no game folder: it draws a pack's 2D floors again from the
+//! pack's own 3D models, writing its report into a folder of its own. The make shown before it stays the last
+//! make (`last_make`, and `Status::last_make_report`), so its areas can still be adjusted and made again.
 
 use std::{
     collections::VecDeque,
@@ -69,6 +73,8 @@ pub enum Job {
     Make {
         maps_folder: PathBuf,
         three_d: bool,
+        /// What the 3D maps are made from (settings::LOOKS_3D): `models` or `collision`.
+        look_3d: String,
         scene_builder: Option<PathBuf>,
         /// The player's own floor cuts (overrides.rs), when there is such a file.
         floor_overrides: Option<PathBuf>,
@@ -81,11 +87,19 @@ pub enum Job {
     Remake {
         maps_folder: PathBuf,
         three_d: bool,
+        look_3d: String,
         scene_builder: Option<PathBuf>,
         floor_overrides: Option<PathBuf>,
         map_style: String,
         floor_method: Option<String>,
         area: String,
+    },
+    /// Draw every 2D floor of the pack in the folder given to `start` again, from its own 3D models.
+    Redraw {
+        scene_builder: Option<PathBuf>,
+        floor_overrides: Option<PathBuf>,
+        map_style: String,
+        floor_method: Option<String>,
     },
     /// Make a map pack from a 3D model (the run's folder is the model file), installed in `maps_folder`; with
     /// `remake`, make it again in place of the one made into the same output folder (with the player's floor cuts).
@@ -104,6 +118,7 @@ pub enum Kind {
     Check,
     Make,
     Remake,
+    Redraw,
 }
 
 impl Job {
@@ -112,6 +127,7 @@ impl Job {
             Job::Check => Kind::Check,
             Job::Make { .. } | Job::Model { remake: false, .. } => Kind::Make,
             Job::Remake { .. } | Job::Model { remake: true, .. } => Kind::Remake,
+            Job::Redraw { .. } => Kind::Redraw,
         }
     }
 
@@ -119,7 +135,9 @@ impl Job {
     pub fn zip_file(&self) -> &'static str {
         match self {
             Job::Check => ZIP_FILE,
-            Job::Make { .. } | Job::Remake { .. } | Job::Model { .. } => MAKE_ZIP_FILE,
+            Job::Make { .. } | Job::Remake { .. } | Job::Model { .. } | Job::Redraw { .. } => {
+                MAKE_ZIP_FILE
+            }
         }
     }
 }
@@ -152,6 +170,8 @@ pub struct Status {
     pub error_code: Option<String>,
     pub helper_output: Vec<String>,
     pub elapsed_seconds: f64,
+    /// While and after drawing a pack again: the report of the make shown before, which stays the last make.
+    pub last_make_report: Option<Value>,
 }
 
 impl Status {
@@ -171,6 +191,7 @@ impl Status {
             error_code: None,
             helper_output: Vec::new(),
             elapsed_seconds: 0.0,
+            last_make_report: None,
         }
     }
 }
@@ -394,6 +415,32 @@ impl Progress {
                 self.push_line("pack", line);
                 self.pack = Some(event);
             }
+            "maps" => {
+                let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
+                self.push_line(
+                    "info",
+                    format!("{count} map{} with a 3D model to draw again", plural(count)),
+                );
+            }
+            "map" => {
+                // Drawing a pack again: what became of each map.
+                let name = text(&event, "name");
+                let line = if event.get("redrawn").and_then(Value::as_bool) == Some(true) {
+                    let floors = event.get("floors").and_then(Value::as_u64).unwrap_or(0);
+                    let from = match event.get("floorsFrom").and_then(Value::as_str) {
+                        Some("yours") => ", with your floor cuts",
+                        Some("passages") => ", with automatic passages",
+                        _ => "",
+                    };
+                    format!(
+                        "{name}: drawn again, {floors} floor{}{from}",
+                        plural(floors)
+                    )
+                } else {
+                    format!("{name}: left as it was ({})", text(&event, "reason"))
+                };
+                self.push_line("area", line);
+            }
             "warning" => self.push_line("warning", text(&event, "message")),
             "error" => {
                 self.error = Some(text(&event, "message"));
@@ -454,6 +501,8 @@ struct Run {
     report: Option<Value>,
     /// None for a make restored from an earlier session (`restore`).
     child: Option<Arc<Mutex<Child>>>,
+    /// Drawing a pack again: the make shown before (its game folder, output folder and report), still the last make.
+    previous_make: Option<(PathBuf, PathBuf, Value)>,
     stdin: Option<ChildStdin>,
 }
 
@@ -659,10 +708,33 @@ impl Checks {
                 }
                 command.arg("make");
             }
+            Job::Redraw { .. } => {
+                command.arg("redraw");
+            }
             Job::Model { .. } => {
                 command.arg("make-model");
             }
         }
+        // Drawing a pack again keeps the make shown before as the last make, and its pack.
+        let previous_make = match &job {
+            Job::Redraw { .. } => inner.run.as_ref().and_then(|run| match run.job.kind() {
+                Kind::Make | Kind::Remake => run
+                    .report
+                    .clone()
+                    .map(|report| (run.folder.clone(), run.out_dir.clone(), report)),
+                Kind::Redraw => run.previous_make.clone(),
+                Kind::Check => None,
+            }),
+            _ => None,
+        };
+        let previous_pack = match &job {
+            Job::Redraw { .. } => inner
+                .run
+                .as_ref()
+                .filter(|_| previous_make.is_some())
+                .and_then(|run| run.progress.pack.clone()),
+            _ => None,
+        };
         // Making an area again shows the report of the make it changes until it is done, and keeps it when it
         // fails or is cancelled.
         let mut previous: Option<(Value, Option<Value>)> = None;
@@ -682,6 +754,7 @@ impl Checks {
         if let Job::Make {
             maps_folder,
             three_d,
+            look_3d,
             scene_builder,
             floor_overrides,
             map_style,
@@ -690,6 +763,7 @@ impl Checks {
         | Job::Remake {
             maps_folder,
             three_d,
+            look_3d,
             scene_builder,
             floor_overrides,
             map_style,
@@ -704,8 +778,11 @@ impl Checks {
                 }
                 (true, Some(builder)) => {
                     command.arg("--scene-builder").arg(builder);
+                    command.arg("--look-3d").arg(look_3d);
                 }
-                (true, None) => {}
+                (true, None) => {
+                    command.arg("--look-3d").arg(look_3d);
+                }
             }
             if let Some(file) = floor_overrides {
                 command.arg("--floor-overrides").arg(file);
@@ -717,6 +794,24 @@ impl Checks {
         }
         if let Job::Remake { area, .. } = &job {
             command.arg("--remake").arg(area);
+        }
+        if let Job::Redraw {
+            scene_builder,
+            floor_overrides,
+            map_style,
+            floor_method,
+        } = &job
+        {
+            if let Some(builder) = scene_builder {
+                command.arg("--scene-builder").arg(builder);
+            }
+            if let Some(file) = floor_overrides {
+                command.arg("--floor-overrides").arg(file);
+            }
+            command.arg("--map-style").arg(map_style);
+            if let Some(method) = floor_method {
+                command.arg("--floor-method").arg(method);
+            }
         }
         if let Job::Model {
             maps_folder,
@@ -784,12 +879,13 @@ impl Checks {
             started: Instant::now(),
             finished: None,
             progress: Progress {
-                pack: pack.flatten(),
+                pack: pack.flatten().or(previous_pack),
                 ..Progress::default()
             },
             report,
             child: Some(Arc::clone(&child)),
             stdin,
+            previous_make,
         });
         drop(inner);
 
@@ -887,6 +983,10 @@ impl Checks {
                 .unwrap_or_else(Instant::now)
                 .duration_since(run.started)
                 .as_secs_f64(),
+            last_make_report: run
+                .previous_make
+                .as_ref()
+                .map(|(_, _, report)| report.clone()),
         }
     }
 
@@ -947,11 +1047,14 @@ impl Checks {
             return Err(format!("{name} is not a file of the report."));
         }
         let inner = lock(&self.inner);
-        let run = inner
-            .run
-            .as_ref()
-            .filter(|run| run.report.is_some())
-            .ok_or("Nothing finished yet.")?;
+        let run = inner.run.as_ref().ok_or("Nothing finished yet.")?;
+        // While a pack is drawn again, the make shown before is still shown, with its pictures.
+        if let (Kind::Redraw, Some((_, out_dir, _))) = (run.job.kind(), &run.previous_make) {
+            return Ok(out_dir.join(name));
+        }
+        if run.report.is_none() {
+            return Err("Nothing finished yet.".to_owned());
+        }
         Ok(run.out_dir.join(name))
     }
 
@@ -959,8 +1062,10 @@ impl Checks {
     pub fn last_make(&self) -> Option<(PathBuf, PathBuf, Value)> {
         let inner = lock(&self.inner);
         let run = inner.run.as_ref()?;
-        if run.job.kind() == Kind::Check {
-            return None;
+        match run.job.kind() {
+            Kind::Check => return None,
+            Kind::Redraw => return run.previous_make.clone(),
+            Kind::Make | Kind::Remake => {}
         }
         let report = run.report.clone()?;
         Some((run.folder.clone(), run.out_dir.clone(), report))
@@ -1011,6 +1116,7 @@ impl Checks {
                 None => Job::Make {
                     maps_folder: maps_folder.to_path_buf(),
                     three_d: true,
+                    look_3d: "models".into(),
                     scene_builder: None,
                     floor_overrides: None,
                     map_style: "shaded".into(),
@@ -1031,6 +1137,7 @@ impl Checks {
             report: Some(report),
             child: None,
             stdin: None,
+            previous_make: None,
         });
         true
     }
@@ -1054,7 +1161,7 @@ impl Checks {
         inner
             .run
             .as_ref()
-            .filter(|run| run.report.is_some())
+            .filter(|run| run.report.is_some() || run.previous_make.is_some())
             .and_then(|run| run.progress.pack.as_ref())
             .and_then(|pack| pack.get("folder"))
             .and_then(Value::as_str)
@@ -1234,6 +1341,45 @@ mod tests {
     }
 
     #[test]
+    fn drawing_a_pack_again_says_what_became_of_each_map() {
+        let mut progress = Progress::default();
+        progress.apply_line(r#"{"event":"maps","count":3}"#);
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:a","name":"Low Town","redrawn":true,"floors":2,"floorsFrom":"pack"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:b","name":"High Town","redrawn":true,"floors":1,"floorsFrom":"yours"}"#,
+        );
+        progress.apply_line(
+            r#"{"event":"map","id":"p:map:c","name":"Shrine","redrawn":false,"reason":"it has no 3D model"}"#,
+        );
+        let texts: Vec<&str> = progress
+            .lines
+            .iter()
+            .map(|line| line.text.as_str())
+            .collect();
+        assert_eq!(
+            texts,
+            vec![
+                "3 maps with a 3D model to draw again",
+                "Low Town: drawn again, 2 floors",
+                "High Town: drawn again, 1 floor, with your floor cuts",
+                "Shrine: left as it was (it has no 3D model)",
+            ]
+        );
+        assert_eq!(
+            Job::Redraw {
+                scene_builder: None,
+                floor_overrides: None,
+                map_style: "floors".into(),
+                floor_method: None,
+            }
+            .kind(),
+            Kind::Redraw
+        );
+    }
+
+    #[test]
     fn unsupported_game_is_reported_with_its_reason() {
         let mut progress = Progress::default();
         progress.apply_line(r#"{"event":"game","game":{"title":"Unknown","supported":false,"reason":"No game here."}}"#);
@@ -1348,6 +1494,7 @@ mod tests {
                 Job::Make {
                     maps_folder: base.join("Maps"),
                     three_d: true,
+                    look_3d: "models".into(),
                     scene_builder: None,
                     floor_overrides: None,
                     map_style: "shaded".into(),
@@ -1463,8 +1610,8 @@ mod tests {
         fs::create_dir_all(&game).unwrap();
         fs::create_dir_all(&out).unwrap();
         let script = base.join("helper.sh");
-        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice (--scene-builder and
-        // the builder, or --no-3d) and the map style. The script writes down what it was given after the maps folder.
+        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice (--scene-builder, the
+        // builder and the 3D look, or --no-3d) and the map style. The script writes down what it was given after the maps folder.
         fs::write(
             &script,
             r#"#!/bin/sh
@@ -1488,6 +1635,7 @@ echo '{"event":"done"}'
                     Job::Make {
                         maps_folder: maps.clone(),
                         three_d,
+                        look_3d: "collision".into(),
                         scene_builder,
                         floor_overrides: None,
                         map_style: "shaded".into(),
@@ -1516,7 +1664,7 @@ echo '{"event":"done"}'
         let given = |out: &Path| fs::read_to_string(out.join("three-d.txt")).unwrap();
         assert_eq!(
             given(&out).trim(),
-            "--scene-builder /builder --map-style shaded --stdin-cancel"
+            "--scene-builder /builder --look-3d collision --map-style shaded --stdin-cancel"
         );
         let flat = base.join("out-flat");
         assert_eq!(
@@ -1607,6 +1755,7 @@ echo '{"event":"done"}'
             let job = Job::Remake {
                 maps_folder: maps.clone(),
                 three_d: false,
+                look_3d: "models".into(),
                 scene_builder: None,
                 floor_overrides: Some(base.join("floor-overrides.json")),
                 map_style: "shaded".into(),
@@ -1660,6 +1809,7 @@ echo '{"event":"done"}'
         let job = Job::Remake {
             maps_folder: maps.clone(),
             three_d: false,
+            look_3d: "models".into(),
             scene_builder: None,
             floor_overrides: None,
             map_style: "shaded".into(),

@@ -23,7 +23,11 @@
 //!   file is. A pack file written at full detail carries the finest level,
 //!   so the pictures as the model had them; standard and overview detail
 //!   carry the smaller copies only. The report says how many bytes of
-//!   pictures each cell's files hold (`cellTextures`).
+//!   pictures each cell's files hold (`cellTextures`). So that no cell's
+//!   finest file grows too heavy with pictures, the builder makes its cells
+//!   smaller (when it chooses their size) until each cell's pictures come to
+//!   at most [`TextureOptions::cell_bytes`] (64 MB when not given) or the
+//!   cells reach [`MIN_TEXTURED_CELL`] a side.
 //!
 //! A later step may write the pictures as KTX2 with Basis Universal
 //! (`KHR_texture_basisu`, which Atlas reads already): [`encode`] is where
@@ -56,6 +60,8 @@ pub const MIN_MAX_SIZE: u32 = 16;
 pub const MAX_MAX_SIZE: u32 = 8192;
 /// A coarser level's copy of a picture is never made smaller than this a side.
 pub const MIN_LEVEL_SIZE: u32 = 32;
+/// Cells are never made smaller than this a side (in world units) to hold fewer pictures.
+pub const MIN_TEXTURED_CELL: f64 = 8.0;
 
 /// How textures are to be made.
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -68,6 +74,11 @@ pub struct TextureOptions {
     /// keeps its own size there.
     #[serde(default)]
     pub max_size: Option<u32>,
+    /// The most bytes of pictures a cell's finest file should hold: when
+    /// the builder chooses the cells' size (no `cellSize`), it makes them
+    /// smaller until each holds no more (64 MB when absent).
+    #[serde(default)]
+    pub cell_bytes: Option<u64>,
 }
 
 impl TextureOptions {

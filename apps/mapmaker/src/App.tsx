@@ -4,6 +4,7 @@ import { FloorsPanel } from './FloorsPanel';
 import { MapStyleChoice } from './MapStyleChoice';
 import { ModelSetup } from './ModelSetup';
 import { levelLines } from './model';
+import { RedrawCard } from './RedrawCard';
 import {
   CATEGORY_LABELS,
   SOURCE_LABELS,
@@ -30,9 +31,11 @@ import {
   suggestedFileName,
   summaryLine,
   FLOOR_METHODS,
+  LOOKS_3D,
   type AreaReport,
   type FloorMethod,
   type GeometrySourceName,
+  type Look3d,
   type MadeArea,
   type MakeReport,
   type MapStyleId,
@@ -83,6 +86,7 @@ function MapMaker() {
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedReport | null>(null);
   const [make3d, setMake3d] = useState(true);
+  const [look3d, setLook3d] = useState<Look3d>('models');
   const [mapStyle, setMapStyle] = useState<MapStyleId>('shaded');
   const [floorMethod, setFloorMethod] = useState<FloorMethod | null>(null);
   const [overrides, setOverrides] = useState<FloorOverrides>({});
@@ -95,6 +99,7 @@ function MapMaker() {
         setInfo(appInfo);
         setFolder((current) => current ?? appInfo.lastFolder);
         setMake3d(appInfo.make3d);
+        setLook3d(appInfo.look3d);
         setMapStyle(appInfo.mapStyle);
         setFloorMethod(appInfo.floorMethod);
       },
@@ -142,14 +147,14 @@ function MapMaker() {
       try {
         setStatus(
           await (kind === 'make'
-            ? api.makeStart(folder, make3d, mapStyle, floorMethod)
+            ? api.makeStart(folder, make3d, mapStyle, floorMethod, look3d)
             : api.checkStart(folder)),
         );
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, folder, make3d, mapStyle, floorMethod],
+    [api, folder, make3d, mapStyle, floorMethod, look3d],
   );
 
   const cancel = useCallback(async () => {
@@ -180,22 +185,39 @@ function MapMaker() {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await api.remakeStart(area, make3d, style));
+        setStatus(await api.remakeStart(area, make3d, style, look3d));
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, make3d],
+    [api, make3d, look3d],
   );
 
-  // A make's report stays shown while one of its areas is made again, and when that fails.
-  const report = status?.report ?? null;
+  const redraw = useCallback(
+    async (pack: string, style: MapStyleId) => {
+      setProblem(null);
+      setSaved(null);
+      try {
+        setStatus(await api.redrawStart(pack, style));
+      } catch (error) {
+        setProblem(errorText(error));
+      }
+    },
+    [api],
+  );
+
+  // A make's report stays shown while one of its areas is made again, and when that fails; and while and after
+  // its pack (or another) is drawn again.
+  const report =
+    status?.kind === 'redraw' ? (status.lastMakeReport ?? null) : (status?.report ?? null);
   const what =
     status?.kind === 'make'
       ? 'making of the map'
       : status?.kind === 'remake'
         ? 'making of the area again'
-        : 'check';
+        : status?.kind === 'redraw'
+          ? 'drawing of the maps again'
+          : 'check';
   // A make from a 3D model: its progress is shown under the model's setup.
   const fromModel = status?.fromModel === true;
   const adjusted = isMakeReport(report)
@@ -272,7 +294,7 @@ function MapMaker() {
           >
             Check game files
           </button>
-          {running && (
+          {running && status.kind !== 'redraw' && (
             <button
               id="check-cancel"
               type="button"
@@ -296,6 +318,29 @@ function MapMaker() {
           />
           Also make 3D maps
         </label>
+        <div className="mm-style">
+          <label htmlFor="look-3d">3D look</label>
+          <select
+            id="look-3d"
+            value={look3d}
+            disabled={running || !make3d}
+            aria-describedby="look-3d-note"
+            onChange={(event) => {
+              setLook3d(event.target.value === 'collision' ? 'collision' : 'models');
+            }}
+          >
+            {LOOKS_3D.map((look) => (
+              <option key={look.id} value={look.id}>
+                {look.label}
+              </option>
+            ))}
+          </select>
+          <span id="look-3d-note" className="small muted">
+            Game models makes each 3D map from the game’s own models, with every texture at its own
+            size up close; an area whose models cannot be read is made from its collision, and its
+            report says so. Collision makes it from the ground and walls, coloured as the map.
+          </span>
+        </div>
         <MapStyleChoice
           id="map-style"
           label="Map style"
@@ -332,9 +377,9 @@ function MapMaker() {
         <p className="muted small">
           Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
           in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
-          one it made before. With 3D maps, each area also gets a 3D model of its ground and walls,
-          in the same colours as its map, which Atlas shows with its 2D | 3D switch; it takes a
-          little longer. Check game files only reports what can be read.
+          one it made before. With 3D maps, each area also gets a 3D model, which Atlas shows with
+          its 2D | 3D switch; it takes a little longer, and longer still with the game’s models and
+          textures. Check game files only reports what can be read.
         </p>
         {make3d && info && !info.sceneBuilderFound && (
           <p className="mm-alert" role="status">
@@ -342,7 +387,9 @@ function MapMaker() {
             be flat. Please reinstall the app.
           </p>
         )}
-        {status && status.state !== 'idle' && !fromModel && <Progress status={status} />}
+        {status && status.state !== 'idle' && !fromModel && status.kind !== 'redraw' && (
+          <Progress status={status} />
+        )}
       </section>
 
       <ModelSetup
@@ -383,7 +430,7 @@ function MapMaker() {
       {status?.state === 'cancelled' && (
         <p className="mm-alert">
           The {what} was stopped. Nothing was changed in the maps folder.{' '}
-          {status.kind === 'remake'
+          {status.kind === 'remake' || status.kind === 'redraw'
             ? 'Your map pack is as it was.'
             : 'Press a button above to start again.'}
         </p>
@@ -423,6 +470,21 @@ function MapMaker() {
               : 'It is made from your game files, so keep it to yourself: do not share or upload it.'}
           </p>
         </section>
+      )}
+
+      {info && (
+        <RedrawCard
+          api={api}
+          status={status}
+          madePack={status?.pack?.id ?? null}
+          mapStyle={mapStyle}
+          running={running}
+          helperFound={info.helperFound}
+          onMapStyle={setMapStyle}
+          onStart={(pack, style) => void redraw(pack, style)}
+          onCancel={() => void cancel()}
+          progress={status && status.state !== 'idle' ? <Progress status={status} /> : null}
+        />
       )}
 
       {report && (
@@ -557,12 +619,16 @@ function Failure({
       ? 'Making the map'
       : status.kind === 'remake'
         ? 'Making the area again'
-        : 'The check';
+        : status.kind === 'redraw'
+          ? 'Drawing the maps again'
+          : 'The check';
   return (
     <section className="mm-card mm-bad-card" role="alert">
       <h2>{title} stopped with an error</h2>
       <p>{status.error ?? 'The file reader stopped unexpectedly.'}</p>
-      {status.kind === 'remake' && <p>Your map pack was left as it was.</p>}
+      {(status.kind === 'remake' || status.kind === 'redraw') && (
+        <p>Your map pack was left as it was.</p>
+      )}
       {onMakeAll && (
         <div className="mm-row">
           <button type="button" className="button button-primary" onClick={onMakeAll}>

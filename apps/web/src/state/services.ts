@@ -110,6 +110,8 @@ export const SETTINGS = {
   sceneView: 'sceneView',
   /** Whether the names of the areas float over the 3D view (see `state/scene3d.ts`). */
   sceneTitles: 'sceneTitles',
+  /** Whether the 3D view paints each floor in its own colour (see `state/scene3d.ts`). */
+  sceneFloorColours: 'sceneFloorColours',
   /** The report of the last 3D trial on this device (see `touch/SceneTrial.tsx`). */
   sceneTrial: 'sceneTrial',
   /** The game save linked to a profile (see `state/saves.ts`). */

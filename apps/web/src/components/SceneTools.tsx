@@ -1,11 +1,13 @@
 import { useId, useState } from 'react';
 import {
+  floorColoursReason,
   floorsOfMap,
   pickFloor,
   requestSceneView,
   sceneOf,
   setCut,
   setCutTowardCamera,
+  setFloorColoursShown,
   setTitlesShown,
   setViewMode,
   useScene3d,
@@ -56,9 +58,12 @@ export function SceneSwitch() {
 
 /**
  * The 3D view's tools: the floors (each, or all of them), "View from
- * above", "Back to the start", the names of the areas on or off, and the
- * cuts: away above a height, when no floor is picked, and toward the
- * camera. After going to a location, All (or Back to the start) goes back.
+ * above", "Back to the start", the names of the areas on or off, each
+ * floor in its own colour or not ("Floor colours", where the map has
+ * floors: elsewhere the button stays, to be reached with a controller, and
+ * says why it does nothing), and the cuts: away above a height, when no
+ * floor is picked, and toward the camera. After going to a location, All
+ * (or Back to the start) goes back.
  */
 export function SceneTools() {
   const game = useAtlas((s) => s.game);
@@ -69,7 +74,10 @@ export function SceneTools() {
   const towardCamera = useScene3d((s) => s.cutTowardCamera);
   const focus = useScene3d((s) => s.focus);
   const titles = useScene3d((s) => s.titles);
+  const floorColours = useScene3d((s) => s.floorColours);
   const [cutsOpen, setCutsOpen] = useState(false);
+  // The reason "Floor colours" does nothing here, once pressed; null: not asked.
+  const [noFloorsFor, setNoFloorsFor] = useState<string | null>(null);
   const sliderId = useId();
   if (!game || !mapId) return null;
   const state = { game };
@@ -80,6 +88,7 @@ export function SceneTools() {
   // Going to a location cuts above it, in place of the free cut.
   const shownCut = focus?.cut ?? cut;
   const cutting = shownCut !== null || towardCamera;
+  const noColours = floorColoursReason(floors);
   return (
     <>
       {floors.length > 0 ? (
@@ -150,6 +159,17 @@ export function SceneTools() {
           <UiIcon name="titles" size={18} />
           <span>Area names</span>
         </button>
+        <FloorColoursToggle
+          on={floorColours}
+          reason={noColours}
+          onPress={() => {
+            if (noColours !== null) {
+              setNoFloorsFor(noFloorsFor === mapId ? null : mapId);
+              return;
+            }
+            setFloorColoursShown(!floorColours);
+          }}
+        />
         <button
           type="button"
           className="scene-tool"
@@ -164,6 +184,11 @@ export function SceneTools() {
           <span>Cut</span>
         </button>
       </div>
+      {noColours !== null && noFloorsFor === mapId ? (
+        <p className="scene-note" role="status" data-testid="scene-floor-colours-note">
+          {noColours}: floor colours show only on a map with floors.
+        </p>
+      ) : null}
       {cutsOpen ? (
         <div className="scene-cuts" data-testid="scene-cuts-panel">
           {picked === null && heights ? (
@@ -209,6 +234,39 @@ export function SceneTools() {
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * "Floor colours", on or off. Where it cannot be used (`reason`), it is
+ * not disabled but marked so (`aria-disabled`): a controller still reaches
+ * it, and pressing it says why.
+ */
+export function FloorColoursToggle(props: {
+  on: boolean;
+  reason: string | null;
+  onPress: () => void;
+}) {
+  const { on, reason } = props;
+  return (
+    <button
+      type="button"
+      className="scene-tool"
+      aria-pressed={reason === null && on}
+      aria-disabled={reason !== null}
+      data-testid="scene-floor-colours-toggle"
+      title={
+        reason !== null
+          ? `Floor colours: ${reason.toLowerCase()}`
+          : on
+            ? 'Show the model in its own colours'
+            : 'Show each floor in its own colour'
+      }
+      onClick={props.onPress}
+    >
+      <UiIcon name="floorColours" size={18} />
+      <span>Floor colours</span>
+    </button>
   );
 }
 

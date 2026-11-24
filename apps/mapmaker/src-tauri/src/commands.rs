@@ -79,6 +79,8 @@ pub struct AppInfo {
     scene_builder_found: bool,
     /// "Also make 3D maps", as last chosen (on by default).
     make_3d: bool,
+    /// "3D look", as last chosen: `models` (the default) or `collision`.
+    look_3d: String,
     /// "Map style", as last chosen.
     map_style: String,
     /// "Floors", as last chosen: `passages` or `cuts`; none for as suits the game.
@@ -138,6 +140,7 @@ pub fn app_info<R: Runtime>(app: AppHandle<R>) -> Result<AppInfo, String> {
         helper_found: checks::find_helper().is_some(),
         scene_builder_found: checks::find_scene_builder().is_some(),
         make_3d: settings.make_3d(),
+        look_3d: settings.look_3d().to_owned(),
         map_style: settings.map_style().to_owned(),
         floor_method: settings.floor_method().map(str::to_owned),
         last_folder: settings.last_folder,
@@ -209,6 +212,15 @@ fn checked_style(
     }
 }
 
+/// The 3D look asked for: `models` or `collision`; as last chosen when none is given.
+fn checked_look(look_3d: Option<String>, settings: &settings::Settings) -> Result<String, String> {
+    match look_3d {
+        Some(look) if settings::is_look_3d(&look) => Ok(look),
+        Some(look) => Err(format!("{look} is not a 3D look.")),
+        None => Ok(settings.look_3d().to_owned()),
+    }
+}
+
 /// The floor method asked for: `passages` or `cuts`, or none (`game`, or nothing) for as suits the game.
 fn checked_method(floor_method: Option<String>) -> Result<Option<String>, String> {
     match floor_method.as_deref() {
@@ -219,8 +231,8 @@ fn checked_method(floor_method: Option<String>) -> Result<Option<String>, String
 }
 
 /// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder, with 3D maps when
-/// `make_3d` ("Also make 3D maps"), drawn in `map_style`, its floors found by `floor_method` (all three
-/// remembered). Its report goes to a new folder in the app's own data.
+/// `make_3d` ("Also make 3D maps") made from `look_3d` ("3D look"), drawn in `map_style`, its floors found by
+/// `floor_method` (all four remembered). Its report goes to a new folder in the app's own data.
 #[tauri::command]
 pub fn make_start<R: Runtime>(
     app: AppHandle<R>,
@@ -229,17 +241,21 @@ pub fn make_start<R: Runtime>(
     make_3d: bool,
     map_style: Option<String>,
     floor_method: Option<String>,
+    look_3d: Option<String>,
 ) -> Result<Status, String> {
     let maps_folder = viewer_maps_folder(&app)?;
     let file = settings_file(&app)?;
     let mut settings = settings::read(&file);
     let map_style = checked_style(map_style, &settings)?;
     let floor_method = checked_method(floor_method)?;
+    let look_3d = checked_look(look_3d, &settings)?;
     if settings.make_3d() != make_3d
+        || settings.look_3d() != look_3d
         || settings.map_style() != map_style
         || settings.floor_method() != floor_method.as_deref()
     {
         settings.make_3d = Some(make_3d);
+        settings.look_3d = Some(look_3d.clone());
         settings.map_style = Some(map_style.clone());
         settings.floor_method = floor_method.clone();
         let _ = settings::write(&file, &settings);
@@ -247,6 +263,7 @@ pub fn make_start<R: Runtime>(
     let job = Job::Make {
         maps_folder,
         three_d: make_3d,
+        look_3d,
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
         map_style,
@@ -255,8 +272,8 @@ pub fn make_start<R: Runtime>(
     start(&app, &checks, folder, job, "makes")
 }
 
-/// Starts making one area (`mAA_BB`) of the last make again, with the player's floor cuts, drawn in `map_style`,
-/// and putting its new map in place of the old one in the pack that make installed.
+/// Starts making one area (`mAA_BB`) of the last make again, with the player's floor cuts, drawn in `map_style`
+/// (its 3D map made from `look_3d`, or as last chosen), and putting its new map in place of the old one in the pack that make installed.
 #[tauri::command]
 pub fn remake_start<R: Runtime>(
     app: AppHandle<R>,
@@ -265,6 +282,7 @@ pub fn remake_start<R: Runtime>(
     area: String,
     make_3d: bool,
     map_style: Option<String>,
+    look_3d: Option<String>,
 ) -> Result<Status, String> {
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     if let Some(Job::Model { setup, .. }) = checks.last_job() {
@@ -276,6 +294,7 @@ pub fn remake_start<R: Runtime>(
     }
     let settings = settings::read(&settings_file(&app)?);
     let map_style = checked_style(map_style, &settings)?;
+    let look_3d = checked_look(look_3d, &settings)?;
     let (folder, out_dir, _) = checks
         .last_make()
         .ok_or("Make the map first: then its areas can be made again.")?;
@@ -293,12 +312,64 @@ pub fn remake_start<R: Runtime>(
     let job = Job::Remake {
         maps_folder: viewer_maps_folder(&app)?,
         three_d: make_3d,
+        look_3d,
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
         map_style,
         // An area's own choice is in the floor cuts file; otherwise as the last make.
         floor_method: settings.floor_method().map(str::to_owned),
         area: key,
+    };
+    checks.start(&helper, job, &folder, &out_dir)
+}
+
+/// The packs in the Atlas viewer's maps folder that have 3D maps, which "Draw all areas again" can draw again.
+#[tauri::command]
+pub fn redraw_packs<R: Runtime>(app: AppHandle<R>) -> Result<Vec<maps::PackWithScenes>, String> {
+    Ok(maps::packs_with_scenes(&viewer_maps_folder(&app)?))
+}
+
+/// Starts drawing every 2D floor of the pack `pack` (a folder in the Atlas viewer's maps folder) again from its
+/// own 3D models, in `map_style` (remembered unless textured), with the player's floor cuts. No game folder is needed. Its report
+/// goes to a new folder in the app's own data.
+#[tauri::command]
+pub fn redraw_start<R: Runtime>(
+    app: AppHandle<R>,
+    checks: State<'_, Checks>,
+    pack: String,
+    map_style: Option<String>,
+) -> Result<Status, String> {
+    if !maps::is_pack_name(&pack) {
+        return Err(format!("{pack} is not a map pack in the maps folder."));
+    }
+    let folder = viewer_maps_folder(&app)?.join(&pack);
+    if !folder.join("manifest.json").is_file() {
+        return Err(format!(
+            "The map pack {pack} is not in the maps folder any more."
+        ));
+    }
+    let file = settings_file(&app)?;
+    let mut settings = settings::read(&file);
+    // A pack's own model can be drawn in its textures, as a map made from a model (every map style).
+    let map_style = checked_style(map_style, &settings)?;
+    if settings.map_style() != map_style {
+        settings.map_style = Some(map_style.clone());
+        let _ = settings::write(&file, &settings);
+    }
+    let helper = checks::find_helper().ok_or(
+        "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+    )?;
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("redraws");
+    let out_dir = checks::new_run_folder(&base)?;
+    let job = Job::Redraw {
+        scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(&app),
+        map_style,
+        floor_method: settings.floor_method().map(str::to_owned),
     };
     checks.start(&helper, job, &folder, &out_dir)
 }
@@ -812,9 +883,7 @@ fn model_remake_start<R: Runtime>(
             file.display()
         ));
     }
-    if let Some(style) =
-        map_style.filter(|style| settings::MODEL_MAP_STYLES.contains(&style.as_str()))
-    {
+    if let Some(style) = map_style.filter(|style| settings::is_map_style(style)) {
         setup.map_style = style;
     }
     let helper = checks::find_helper().ok_or(
