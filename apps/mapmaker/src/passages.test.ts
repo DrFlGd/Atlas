@@ -83,7 +83,7 @@ describe('automatic passages in Adjust floors', () => {
     expect(startMethod(area)).toBe('passages');
     expect(startChoices(area)).toEqual([{ x: 1, z: 2, show: 'lower' }]);
     expect(startMethod(madeArea({ cuts: [3] }))).toBe('cuts');
-    expect(cutsLine(area)).toBe('Automatic passages: 1 overlapping place, 1 set by you');
+    expect(cutsLine(area)).toBe('Automatic passages: 1 overlapping spot, 1 set by you');
     expect(cutsLine(madeArea({ method: 'passages', cuts: [] }))).toBe(
       'Automatic passages: nothing overlaps',
     );

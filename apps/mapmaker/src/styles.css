@@ -1001,3 +1001,73 @@ h3 {
   align-items: center;
   gap: 6px;
 }
+
+/* "Make a map from a 3D model…": the setup beside a preview of the model. */
+.mm-model-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 980px) {
+  .mm-model-grid {
+    grid-template-columns: minmax(300px, 420px) minmax(0, 1fr);
+    align-items: start;
+  }
+
+  .mm-model-preview {
+    position: sticky;
+    top: 12px;
+  }
+}
+
+.mm-model-fields .mm-style {
+  margin: 8px 0;
+}
+
+.mm-model input[type='text'] {
+  min-height: 34px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--atlas-border-strong);
+  border-radius: var(--atlas-radius-small);
+  background: var(--atlas-surface-raised);
+  color: var(--atlas-text);
+  font: inherit;
+}
+
+.mm-model .mm-inline input[type='text'] {
+  min-height: 28px;
+  width: 5em;
+}
+
+.mm-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mm-fieldset {
+  display: grid;
+  margin: 8px 0;
+  padding: 0;
+  border: 0;
+}
+
+.mm-fieldset legend {
+  padding: 0;
+}
+
+.mm-fieldset .mm-check {
+  margin-top: 6px;
+}
+
+.mm-model-preview .mm-fp-3d-view {
+  height: 420px;
+}
+
+@media (max-width: 600px) {
+  .mm-model-preview .mm-fp-3d-view {
+    height: 300px;
+  }
+}

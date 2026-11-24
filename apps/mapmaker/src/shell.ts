@@ -11,6 +11,7 @@ import type {
   PassagePlace,
   PassagesReport,
 } from './report';
+import type { Inspected, ModelSetup } from './model';
 
 export interface AppInfo {
   version: string;
@@ -49,6 +50,8 @@ export interface CheckStatus {
   /** A check, a make (Make map), the making of one area again (Make this area again), or the drawing of a pack
    * again from its 3D models (Draw all areas again). */
   kind: 'check' | 'make' | 'remake' | 'redraw';
+  /** A make (or making again) of a map from a 3D model: `folder` is the model file. */
+  fromModel?: boolean;
   runId: number;
   folder: string | null;
   fraction: number;
@@ -80,6 +83,12 @@ export interface PackWithScenes {
   madeByMapMaker: boolean;
 }
 
+/** A model file chosen with "Make a map from a 3D model…". */
+export interface ModelChoice {
+  path: string;
+  name: string;
+}
+
 export interface SavedReport {
   path: string;
   name: string;
@@ -96,7 +105,8 @@ export interface FloorEntry {
   passages?: PassageChoice[];
 }
 
-/** The player's floor cuts: per game, per area (mAA_BB). */
+/** The player's floor cuts: per game, per area (mAA_BB; `model` for a map made from a 3D model, under its pack
+ * id). */
 export type FloorOverrides = Record<string, Record<string, FloorEntry>>;
 
 export interface FloorCutsFile {
@@ -126,12 +136,14 @@ export interface FloorViewsReady {
   navmeshTriangles?: number;
 }
 
-/** The area's triangles: each corner's x, height and z as 16-bit steps from `min` to `max`, base64. */
+/** The area's triangles: each corner's x, height and z as 16-bit steps from `min` to `max`, base64; for a 3D
+ * model's preview, each triangle's own colour too (three sRGB bytes, base64). */
 export interface AreaModel {
   triangles: number;
   min: [number, number, number];
   max: [number, number, number];
   positions: string;
+  colours?: string;
 }
 
 /** The whole area from one side, a byte a pixel (see floorviews.py), rows from the top height down. */
@@ -221,6 +233,12 @@ export interface Shell {
     floorMethod: FloorMethod | null,
   ): Promise<CheckStatus>;
   remakeStart(area: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
+  /** Asks for a 3D model file (null: the dialog was closed). */
+  chooseModel(): Promise<ModelChoice | null>;
+  /** Reads the chosen model: what it holds and a preview of its shape. */
+  modelInspect(allowLarge: boolean): Promise<Inspected>;
+  /** Makes a map pack from the chosen model. */
+  modelMakeStart(setup: ModelSetup): Promise<CheckStatus>;
   restoreLastMake(): Promise<CheckStatus>;
   /** The packs in the Atlas maps folder that have 3D maps. */
   redrawPacks(): Promise<PackWithScenes[]>;
@@ -271,6 +289,9 @@ export function createShell(invoke: Invoke): Shell {
     redrawPacks: () => invoke('redraw_packs') as Promise<PackWithScenes[]>,
     redrawStart: (pack, mapStyle) =>
       invoke('redraw_start', { pack, mapStyle }) as Promise<CheckStatus>,
+    chooseModel: () => invoke('choose_model') as Promise<ModelChoice | null>,
+    modelInspect: (allowLarge) => invoke('model_inspect', { allowLarge }) as Promise<Inspected>,
+    modelMakeStart: (setup) => invoke('model_make_start', { setup }) as Promise<CheckStatus>,
     floorOverridesRead: () => invoke('floor_overrides_read') as Promise<FloorOverrides>,
     floorOverridesSet: (game, area, entry) =>
       invoke('floor_overrides_set', { game, area, entry }) as Promise<FloorOverrides>,

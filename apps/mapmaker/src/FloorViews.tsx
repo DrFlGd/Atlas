@@ -26,8 +26,11 @@ export function Floors3D(props: {
   onPick?: (index: number | null) => void;
   /** The item the view went to (`seq` tells a press again from the last), and the height it is cut at. */
   focus?: { index: number; cut: number; seq: number } | null;
+  /** A 3D model's preview: each triangle in its own colour, and its bounds as a box. */
+  ownColours?: boolean;
+  bounds?: boolean;
 }) {
-  const { model, markers } = props;
+  const { model, markers, bounds } = props;
   const box = useRef<HTMLDivElement>(null);
   const [scene, setScene] = useState<FloorsScene | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -50,6 +53,7 @@ export function Floors3D(props: {
             markers,
             onHover: setHover,
             onPick: (index) => pickRef.current?.(index),
+            bounds: bounds ?? false,
           });
           setScene(made);
         } catch {
@@ -64,10 +68,10 @@ export function Floors3D(props: {
       live = false;
       made?.dispose();
     };
-  }, [model, markers]);
+  }, [model, markers, bounds]);
 
   const { cuts, selected, hideAbove, showMarkers, outlines, looks } = props;
-  const { triangleFloors, clipHeight, places, focus } = props;
+  const { triangleFloors, clipHeight, places, focus, ownColours } = props;
   const cutAt = focus?.cut ?? null;
   // Going to an item: the view flies down to it, once for each press.
   const flownTo = useRef(0);
@@ -88,9 +92,11 @@ export function Floors3D(props: {
       clipHeight: clipHeight ?? null,
       places: places ?? [],
       cutAt,
+      ownColours: ownColours ?? false,
     });
   }, [
     cutAt,
+    ownColours,
     scene,
     cuts,
     selected,

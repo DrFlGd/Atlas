@@ -6,9 +6,14 @@
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
                     [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
                     [--no-3d] [--scene-builder <atlas-scene program>]
-    atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB>
+    atlas-gamefiles make-model <model file> --out <output folder> [--maps-folder <folder>] [--stdin-cancel]
+                    [--name <name>] [--title <title>] [--up +y|+z|-y|-z|+x|-x] [--scale <metres per unit>]
+                    [--textures keep|plain] [--double-sided auto|yes|no] [--floors ground|passages|none]
+                    [--floor-separation <m>] [--merge-gap <m>] [--max-triangles <n>] [--map-style <style>]
+                    [--floor-overrides <file>] [--remake] [--scene-builder <atlas-scene program>]
     atlas-gamefiles redraw <pack folder> --out <output folder> [--map-style <style>] [--floor-overrides <file>]
                     [--floor-method passages|cuts] [--scene-builder <atlas-scene program>] [--stdin-cancel]
+    atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB, or model>
     atlas-gamefiles --version
 
 The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
@@ -156,14 +161,46 @@ def parser() -> argparse.ArgumentParser:
     )
     again.add_argument("pack", type=Path, help="the map pack's folder (in the Atlas maps folder)")
     again.add_argument("--out", type=Path, required=True, help="where to write report.json")
-    again.add_argument("--map-style", default=None, metavar="STYLE", help="how the floors are drawn, as for make")
+    again.add_argument(
+        "--map-style", default=None, metavar="STYLE", help="how the floors are drawn, as for make-model (the textured styles too)"
+    )
     again.add_argument("--floor-overrides", type=Path, default=None, help="the player's own floor cuts, as for make")
     again.add_argument("--floor-method", default=None, choices=("passages", "cuts"), help="as for make")
     again.add_argument("--scene-builder", type=Path, default=None, help="the 3D builder program, as for make")
     again.add_argument("--stdin-cancel", action="store_true", help="as for check")
+    model = commands.add_parser("make-model", help="make an Atlas map pack from a 3D model file (glTF, OBJ, STL, PLY)")
+    model.add_argument("model", type=Path, help="the model file (.glb, .gltf, .obj, .stl or .ply)")
+    model.add_argument("--out", type=Path, required=True, help="where to write report.json, previews/ and the zip")
+    model.add_argument("--maps-folder", type=Path, default=None, help="as for make")
+    model.add_argument("--stdin-cancel", action="store_true", help="as for check")
+    model.add_argument("--name", default=None, help="the map's name (the pack id is made from it); the file's name by default")
+    model.add_argument("--title", default=None, help="the pack's title; the name by default")
+    model.add_argument("--up", default="+y", choices=("+y", "+z", "-y", "-z", "+x", "-x"), help="the model's up axis")
+    model.add_argument("--scale", type=float, default=1.0, help="metres per model unit (0.01 for centimetres)")
+    model.add_argument("--units", default=None, help="what the scale is, for the report (metres, centimetres, …)")
+    model.add_argument("--textures", default="keep", choices=("keep", "plain"), help="keep the textures, or plain colours")
+    model.add_argument(
+        "--double-sided",
+        default="auto",
+        choices=("auto", "yes", "no"),
+        help="surfaces seen from both sides: as the model says (glTF materials; OBJ, STL and PLY both), or all, or none",
+    )
+    model.add_argument(
+        "--floors",
+        default="ground",
+        choices=("ground", "passages", "none"),
+        help="floors by ground area, automatic passages, or none (one map of the whole model)",
+    )
+    model.add_argument("--floor-separation", type=float, default=None, help="ground area: floor levels at least this far apart (m)")
+    model.add_argument("--merge-gap", type=float, default=None, help="ground area: levels closer than this are joined (m)")
+    model.add_argument("--max-triangles", type=int, default=None, help="refuse a model of more triangles (default 5,000,000)")
+    model.add_argument("--map-style", default=None, metavar="STYLE", help="shaded, outlines, floors, textured or textured-outlines")
+    model.add_argument("--floor-overrides", type=Path, default=None, help="as for make (under the pack id, area model)")
+    model.add_argument("--remake", action="store_true", help="make the map again in place of the one made into this output folder")
+    model.add_argument("--scene-builder", type=Path, default=None, help="as for make")
     views = commands.add_parser("floor-views", help="redraw an area's floors from given cuts (for the Map Maker)")
     views.add_argument("out", type=Path, help="the output folder of a make (it holds floor-data/)")
-    views.add_argument("--area", required=True, help="the area, mAA_BB")
+    views.add_argument("--area", required=True, help="the area: mAA_BB, or model for a map made from a 3D model")
     return root
 
 
@@ -214,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
             return EXIT_ERROR
     if args.command == "redraw":
         return run_redraw(args, events, token)
+    if args.command == "make-model":
+        return run_make_model(args, events, token)
     if args.command == "make":
         if args.remake and not re.fullmatch(r"m\d\d_\d\d(_\d\d_\d\d)?", args.remake.lower()):
             events.emit("error", message=f"{args.remake} is not an area (mAA_BB).")
@@ -301,6 +340,50 @@ def run_redraw(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> 
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
         return EXIT_CANCELLED
     except RedrawError as error:
+        events.emit("error", message=str(error))
+        return EXIT_USAGE
+    except Exception as error:
+        traceback.print_exc()
+        events.emit("error", message=f"{type(error).__name__}: {error}")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+
+def run_make_model(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> int:
+    from .make import MakeError
+    from .model import DEFAULT_MAX_TRIANGLES, ModelMapMaker
+
+    try:
+        ModelMapMaker(
+            args.model,
+            args.out,
+            events,
+            token=token,
+            maps_folder=args.maps_folder,
+            scene_builder=args.scene_builder,
+            name=args.name,
+            title=args.title,
+            up=args.up,
+            scale=args.scale,
+            units=args.units,
+            textures=args.textures,
+            double_sided={"yes": True, "no": False}.get(args.double_sided),
+            floors=args.floors,
+            floor_separation=args.floor_separation,
+            merge_gap=args.merge_gap,
+            max_triangles=args.max_triangles or DEFAULT_MAX_TRIANGLES,
+            style=args.map_style,
+            floor_overrides_file=args.floor_overrides,
+            remake=args.remake,
+        ).run()
+    except Cancelled:
+        events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
+        return EXIT_CANCELLED
+    except MakeError as error:
+        events.emit("error", message=str(error), **({"code": error.code} if error.code else {}))
+        return EXIT_USAGE
+    except UnsafeOutputError as error:
         events.emit("error", message=str(error))
         return EXIT_USAGE
     except Exception as error:

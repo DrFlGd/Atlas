@@ -7,7 +7,7 @@ import {
   redrawSummaryLine,
   type RedrawReport,
 } from './redrawing';
-import type { MapStyleId } from './report';
+import { MAP_STYLES, type MapStyleId } from './report';
 import { errorText, type CheckStatus, type PackWithScenes, type Shell } from './shell';
 
 /**
@@ -23,8 +23,9 @@ export function RedrawCard(props: {
   mapStyle: MapStyleId;
   running: boolean;
   helperFound: boolean;
+  /** A style Make map draws too, chosen here: remembered for it. */
   onMapStyle: (style: MapStyleId) => void;
-  onStart: (pack: string) => void;
+  onStart: (pack: string, style: MapStyleId) => void;
   onCancel: () => void;
   /** The progress of a redraw running or just finished. */
   progress: ReactNode;
@@ -33,6 +34,14 @@ export function RedrawCard(props: {
   const [packs, setPacks] = useState<PackWithScenes[] | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  // The pack's own model can be drawn in its textures too, as a map made from a model: those styles are kept here.
+  const [style, setStyle] = useState<MapStyleId>(props.mapStyle);
+  // Make map's style, once read from the settings or chosen there, is offered here too.
+  const [makeStyle, setMakeStyle] = useState<MapStyleId>(props.mapStyle);
+  if (makeStyle !== props.mapStyle) {
+    setMakeStyle(props.mapStyle);
+    setStyle(props.mapStyle);
+  }
   // Listed again when a make or a redraw has finished.
   const finished = status?.state === 'done' ? status.runId : 0;
   useEffect(() => {
@@ -64,7 +73,8 @@ export function RedrawCard(props: {
       <p className="muted small">
         Draws every 2D floor of a map pack in the Atlas maps folder again from the pack’s own 3D
         models, in the map style chosen here, with your floor cuts. No game files are needed, so it
-        works for any pack with 3D maps. Maps without a 3D model are left as they are.
+        works for any pack with 3D maps. The textured styles draw the model’s own textures and
+        colours. Maps without a 3D model are left as they are.
       </p>
       {packs === null ? (
         <p className="muted small">Looking for map packs with 3D maps…</p>
@@ -95,9 +105,15 @@ export function RedrawCard(props: {
           <MapStyleChoice
             id="redraw-style"
             label="Map style"
-            value={props.mapStyle}
+            value={style}
+            model
             disabled={props.running}
-            onChange={props.onMapStyle}
+            onChange={(next) => {
+              setStyle(next);
+              if (MAP_STYLES.some((entry) => entry.id === next && entry.available)) {
+                props.onMapStyle(next);
+              }
+            }}
           />
           <div className="mm-row">
             <button
@@ -106,7 +122,7 @@ export function RedrawCard(props: {
               className="button button-primary"
               disabled={!picked || props.running || !props.helperFound}
               onClick={() => {
-                if (picked) props.onStart(picked.id);
+                if (picked) props.onStart(picked.id, style);
               }}
             >
               Draw all areas again

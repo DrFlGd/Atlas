@@ -3,8 +3,9 @@
 //! every 3D map follows the "3D maps" section of `docs/pack-file-format.md`.
 //!
 //! [`build`] takes a raw model ([`gltf::read_glb`]: a glTF binary file of
-//! triangle meshes with vertex colours and plain materials) and [`Options`],
-//! and writes into a pack folder:
+//! triangle meshes with vertex colours and plain materials, or any model
+//! file [`formats`] reads: glTF, OBJ, STL or PLY, as a person made or
+//! exported it) and [`Options`], and writes into a pack folder:
 //!
 //! 1. **Lines the model up** with the game's world: [`Options::axes`],
 //!    `scale` and `offset` say how the raw model's coordinates become world
@@ -54,6 +55,8 @@
 #![allow(clippy::needless_range_loop)]
 
 pub mod check;
+pub mod draw;
+pub mod formats;
 mod glb;
 pub mod gltf;
 pub mod render;
@@ -162,6 +165,15 @@ pub struct Options {
     /// Draw the model from above into map image tiles.
     #[serde(default)]
     pub render: Option<RenderOptions>,
+    /// Every material seen from both sides (`true`) or from its front only
+    /// (`false`); absent, as each material says (a glTF material's
+    /// `doubleSided`; OBJ, STL and PLY materials are seen from both sides).
+    #[serde(default)]
+    pub double_sided: Option<bool>,
+    /// A model file of more triangles is refused
+    /// ([`formats::LARGEST_MAX_TRIANGLES`] when absent).
+    #[serde(default)]
+    pub max_triangles: Option<usize>,
 }
 
 impl Options {
@@ -240,7 +252,7 @@ pub struct Built {
 
 /// The raw model's coordinates to the world's.
 #[derive(Clone, Copy, Debug)]
-struct Transform {
+pub struct Transform {
     /// world[row] = sign[row] * scale * p[column[row]] + offset[row]
     column: [usize; 3],
     sign: [f64; 3],
@@ -250,9 +262,17 @@ struct Transform {
 
 impl Transform {
     fn new(options: &Options) -> Result<Transform, String> {
-        let axes = options
-            .axes
-            .clone()
+        Transform::from_parts(options.axes.as_ref(), options.scale, options.offset)
+    }
+
+    /// From a scene's `axes`, `scale` and `offset` (see [`Options`]).
+    pub fn from_parts(
+        axes: Option<&[String; 3]>,
+        scale: Option<f64>,
+        offset: Option<[f64; 3]>,
+    ) -> Result<Transform, String> {
+        let axes = axes
+            .cloned()
             .unwrap_or_else(|| ["+x".to_owned(), "-z".to_owned(), "+y".to_owned()]);
         let mut column = [0; 3];
         let mut sign = [1.0; 3];
@@ -276,11 +296,11 @@ impl Transform {
         if column.iter().collect::<HashSet<_>>().len() != 3 {
             return Err("axes must name each of x, y and z once".to_owned());
         }
-        let scale = options.scale.unwrap_or(1.0);
+        let scale = scale.unwrap_or(1.0);
         if !(scale.is_finite() && scale > 0.0) {
             return Err("scale must be above 0".to_owned());
         }
-        let offset = options.offset.unwrap_or([0.0; 3]);
+        let offset = offset.unwrap_or([0.0; 3]);
         if offset.iter().any(|v| !v.is_finite()) {
             return Err("offset must be three numbers".to_owned());
         }
@@ -292,13 +312,14 @@ impl Transform {
         })
     }
 
-    fn apply(&self, p: &[f64; 3]) -> [f64; 3] {
+    /// World x, y and height of a raw model point.
+    pub fn apply(&self, p: &[f64; 3]) -> [f64; 3] {
         [0, 1, 2].map(|row| self.sign[row] * self.scale * p[self.column[row]] + self.offset[row])
     }
 
     /// Whether it turns the model inside out (a mirror), counted with the
     /// turn from the world to the files' glTF axes, which is none.
-    fn mirrors(&self) -> bool {
+    pub fn mirrors(&self) -> bool {
         // The sign of the permutation times the signs of the axes.
         let [a, b, c] = self.column;
         let inversions = usize::from(a > b) + usize::from(a > c) + usize::from(b > c);
@@ -652,7 +673,12 @@ pub fn build(
             ),
         });
     }
-    let materials = textures::materials_for(model, &options.textures);
+    let mut materials = textures::materials_for(model, &options.textures);
+    if let Some(both) = options.double_sided {
+        for material in &mut materials {
+            material.double_sided = both;
+        }
+    }
     let mut pictures = textures::Pictures::new(model, options.textures);
 
     // 2. What is never seen.
@@ -1059,11 +1085,44 @@ pub fn build_file(
     progress: &mut dyn FnMut(f64, &str),
 ) -> Result<Built, String> {
     progress(0.0, "reading the model");
-    let bytes = fs::read(input).map_err(|e| format!("{}: {e}", input.display()))?;
-    let model = gltf::read_glb(&bytes).map_err(|e| format!("{}: {e}", input.display()))?;
-    drop(bytes);
+    let read = formats::ReadOptions {
+        // A raw model another app wrote is read whatever its size; the Map Maker names the most for a model file.
+        max_triangles: options
+            .max_triangles
+            .unwrap_or(formats::LARGEST_MAX_TRIANGLES),
+    };
+    let (model, _) = read_model(input, &read)?;
     build(&model, options, pack, progress)
+}
+
+/// Reads a model file of any format the builder reads ([`formats`]): a file
+/// that is not `.glb` by name but holds a glTF binary (a raw model written
+/// by another app) is read as one too.
+pub fn read_model(
+    input: &Path,
+    read: &formats::ReadOptions,
+) -> Result<(Model, formats::ModelInfo), String> {
+    let extension = input
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    if !formats::EXTENSIONS.contains(&extension.as_str()) {
+        let start = fs::File::open(input)
+            .and_then(|mut file| {
+                let mut head = [0u8; 4];
+                std::io::Read::read_exact(&mut file, &mut head).map(|_| head)
+            })
+            .unwrap_or_default();
+        if &start == b"glTF" {
+            let bytes = fs::read(input).map_err(|e| format!("{}: {e}", input.display()))?;
+            let model = gltf::read_glb(&bytes).map_err(|e| format!("{}: {e}", input.display()))?;
+            return Ok((model, formats::ModelInfo::default()));
+        }
+    }
+    formats::read_model(input, read)
 }
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_formats;

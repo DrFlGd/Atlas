@@ -239,7 +239,8 @@ fn determinant(m: &Matrix) -> f64 {
 
 struct Reader<'a> {
     json: &'a Value,
-    bin: &'a [u8],
+    /// Each buffer's bytes, by index (the binary chunk, a `data:` URI or a file next to the model).
+    buffers: Vec<std::borrow::Cow<'a, [u8]>>,
 }
 
 fn list<'a>(json: &'a Value, key: &str) -> &'a [Value] {
@@ -301,15 +302,10 @@ impl Reader<'_> {
             );
         }
         let buffer_index = index_of(view, "buffer").unwrap_or(0);
-        let buffer = list(self.json, "buffers")
+        let bin: &[u8] = self
+            .buffers
             .get(buffer_index)
             .ok_or("a buffer view names a buffer that is missing")?;
-        if buffer_index != 0 || buffer.get("uri").is_some() {
-            return Err(
-                "the model reads a file of its own (a uri); give the builder one .glb file with everything in it"
-                    .to_owned(),
-            );
-        }
         let view_offset = index_of(view, "byteOffset").unwrap_or(0);
         let view_length = index_of(view, "byteLength").ok_or("a buffer view has no length")?;
         let element = size * components;
@@ -317,9 +313,9 @@ impl Reader<'_> {
         let offset = index_of(accessor, "byteOffset").unwrap_or(0);
         let view_end = view_offset
             .checked_add(view_length)
-            .filter(|end| *end <= self.bin.len())
+            .filter(|end| *end <= bin.len())
             .ok_or("a buffer view runs past the end of the file")?;
-        let data = &self.bin[view_offset..view_end];
+        let data = &bin[view_offset..view_end];
         if count > 0 && offset + stride * (count - 1) + element > data.len() {
             return Err(format!("accessor {index} runs past its buffer view"));
         }
@@ -407,14 +403,67 @@ fn material_of(value: &Value) -> Material {
     }
 }
 
-/// The picture a material's base colour texture shows, when it is in the
-/// file's binary chunk: its image's index and bytes, the sampler's wrap
-/// along u and v, and the texture coordinates it reads.
-fn texture_of<'a>(
-    json: &Value,
-    bin: &'a [u8],
+/// Where a glTF model's own files are: the folder of a `.gltf` file, whose
+/// buffers and pictures may be files next to it (`uri`), or none for a
+/// `.glb` file read on its own, which must hold everything.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Companions<'a> {
+    pub folder: Option<&'a std::path::Path>,
+    /// The model file's name, for messages.
+    pub model: &'a str,
+}
+
+/// What reading a glTF model noticed that the person may want to know.
+#[derive(Clone, Debug, Default)]
+pub struct GltfNotes {
+    /// Pictures of textures that are missing (their file names).
+    pub missing_pictures: Vec<String>,
+    /// Extensions the model uses that are not read (their names).
+    pub unread_extensions: Vec<String>,
+}
+
+/// The bytes a `uri` names: a `data:` URI, or a file in the model's folder.
+fn uri_bytes(uri: &str, companions: &Companions) -> Result<Vec<u8>, String> {
+    if let Some(rest) = uri.strip_prefix("data:") {
+        let (head, data) = rest
+            .split_once(',')
+            .ok_or("a data URI in the model has no data")?;
+        if !head.ends_with(";base64") {
+            return Err("a data URI in the model is not base64".to_owned());
+        }
+        return crate::formats::base64_decode(data)
+            .ok_or_else(|| "a data URI in the model cannot be read".to_owned());
+    }
+    let Some(folder) = companions.folder else {
+        return Err(
+            "the model reads a file of its own (a uri); give the builder one .glb file with everything in it"
+                .to_owned(),
+        );
+    };
+    let name = crate::formats::percent_decode(uri);
+    let path = folder.join(&name);
+    std::fs::read(&path).map_err(|_| {
+        format!(
+            "{name} is missing: it belongs to {} and must be in the same folder as it",
+            companions.model
+        )
+    })
+}
+
+/// A texture's image index and picture bytes, the sampler's wrap along u
+/// and v, and the texture coordinates it reads.
+type FoundTexture = (usize, Vec<u8>, [u32; 2], usize);
+
+/// The picture a material's base colour texture shows (in a buffer or a
+/// file of its own): its image's index and bytes, the sampler's wrap along
+/// u and v, and the texture coordinates it reads. `Err` with the picture's
+/// file name when it is missing.
+fn texture_of(
+    reader: &Reader,
+    companions: &Companions,
     material: &Value,
-) -> Option<(usize, &'a [u8], [u32; 2], usize)> {
+) -> Option<Result<FoundTexture, String>> {
+    let json = reader.json;
     let info = material
         .get("pbrMetallicRoughness")?
         .get("baseColorTexture")?;
@@ -431,44 +480,144 @@ fn texture_of<'a>(
             .filter(|w| [WRAP_REPEAT, WRAP_CLAMP, WRAP_MIRROR].contains(w))
             .unwrap_or(WRAP_REPEAT)
     };
-    let view = list(json, "images")
-        .get(image)?
-        .get("bufferView")?
-        .as_u64()? as usize;
-    let view = list(json, "bufferViews").get(view)?;
-    if view.get("buffer").and_then(Value::as_u64).unwrap_or(0) != 0 {
-        return None;
+    let wrap = [wrap_of("wrapS"), wrap_of("wrapT")];
+    let picture = list(json, "images").get(image)?;
+    if let Some(uri) = picture.get("uri").and_then(Value::as_str) {
+        return Some(match uri_bytes(uri, companions) {
+            Ok(bytes) => Ok((image, bytes, wrap, tex_coord)),
+            Err(_) => Err(crate::formats::percent_decode(uri)),
+        });
     }
+    let view = picture.get("bufferView")?.as_u64()? as usize;
+    let view = list(json, "bufferViews").get(view)?;
+    let buffer = reader
+        .buffers
+        .get(view.get("buffer").and_then(Value::as_u64).unwrap_or(0) as usize)?;
     let offset = view.get("byteOffset").and_then(Value::as_u64).unwrap_or(0) as usize;
     let length = view.get("byteLength")?.as_u64()? as usize;
-    let bytes = bin.get(offset..offset.checked_add(length)?)?;
-    Some((
-        image,
-        bytes,
-        [wrap_of("wrapS"), wrap_of("wrapT")],
-        tex_coord,
-    ))
+    let bytes = buffer.get(offset..offset.checked_add(length)?)?;
+    Some(Ok((image, bytes.to_vec(), wrap, tex_coord)))
 }
 
 /// Reads a `.glb` file's triangle meshes, every node transform applied.
 pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
+    read_glb_with(
+        bytes,
+        &Companions::default(),
+        &mut GltfNotes::default(),
+        usize::MAX,
+    )
+}
+
+/// Reads a `.glb` file, whose buffers and pictures may also be files in
+/// `companions`' folder; refuses one of more than `max_triangles`.
+pub fn read_glb_with(
+    bytes: &[u8],
+    companions: &Companions,
+    notes: &mut GltfNotes,
+    max_triangles: usize,
+) -> Result<Model, String> {
     let (json, bin) = split_glb(bytes)?;
-    let reader = Reader { json: &json, bin };
+    read_json(&json, Some(bin), companions, notes, max_triangles)
+}
+
+/// Reads a `.gltf` file (its JSON), with its buffers and pictures in `data:`
+/// URIs or files in `companions`' folder.
+pub fn read_gltf_with(
+    text: &[u8],
+    companions: &Companions,
+    notes: &mut GltfNotes,
+    max_triangles: usize,
+) -> Result<Model, String> {
+    let json: Value = serde_json::from_slice(text.strip_prefix(b"\xef\xbb\xbf").unwrap_or(text))
+        .map_err(|error| format!("it is not a glTF file: its JSON cannot be read ({error})"))?;
+    read_json(&json, None, companions, notes, max_triangles)
+}
+
+/// Why a model with more than `max` triangles is refused.
+pub fn too_many(max: usize) -> String {
+    format!(
+        "it has more than {} million triangles, more than the Map Maker takes at once; choose Allow very large models to try it anyway",
+        max / 1_000_000
+    )
+}
+
+/// Extensions that change how a model must be read, and are not read here.
+const UNREADABLE: [(&str, &str); 3] = [
+    ("KHR_draco_mesh_compression", "Draco compression"),
+    ("EXT_meshopt_compression", "meshopt compression"),
+    ("KHR_meshopt_compression", "meshopt compression"),
+];
+
+fn read_json(
+    json: &Value,
+    bin: Option<&[u8]>,
+    companions: &Companions,
+    notes: &mut GltfNotes,
+    max_triangles: usize,
+) -> Result<Model, String> {
+    let version = json
+        .get("asset")
+        .and_then(|a| a.get("version"))
+        .and_then(Value::as_str)
+        .unwrap_or("2.0");
+    if !version.starts_with('2') {
+        return Err(format!("it is glTF version {version}, not 2"));
+    }
+    for name in list(json, "extensionsUsed")
+        .iter()
+        .filter_map(Value::as_str)
+    {
+        if let Some((_, what)) = UNREADABLE.iter().find(|(n, _)| *n == name) {
+            return Err(format!(
+                "its meshes are compressed ({what}), which is not read: export it again without compression"
+            ));
+        }
+        let known = name.starts_with("KHR_materials_")
+            || matches!(
+                name,
+                "KHR_mesh_quantization" | "KHR_texture_transform" | "KHR_lights_punctual"
+            );
+        if !known {
+            notes.unread_extensions.push(name.to_owned());
+        }
+    }
+    let mut buffers = Vec::new();
+    for (index, buffer) in list(json, "buffers").iter().enumerate() {
+        let bytes: std::borrow::Cow<[u8]> = match buffer.get("uri").and_then(Value::as_str) {
+            Some(uri) => std::borrow::Cow::Owned(uri_bytes(uri, companions)?),
+            None if index == 0 && bin.is_some() => {
+                std::borrow::Cow::Borrowed(bin.unwrap_or_default())
+            }
+            None => std::borrow::Cow::Borrowed(&[][..]),
+        };
+        buffers.push(bytes);
+    }
+    let reader = Reader { json, buffers };
     let mut model = Model {
-        materials: list(&json, "materials").iter().map(material_of).collect(),
+        materials: list(json, "materials").iter().map(material_of).collect(),
         ..Model::default()
     };
     // Each texture's average colour and its picture, each picture read once.
     let mut averages: std::collections::HashMap<usize, (usize, Option<[f32; 3]>)> =
         std::collections::HashMap::new();
-    for (material, value) in model.materials.iter_mut().zip(list(&json, "materials")) {
-        if let Some((image, bytes, wrap, tex_coord)) = texture_of(&json, bin, value) {
+    for (material, value) in model.materials.iter_mut().zip(list(json, "materials")) {
+        let found = match texture_of(&reader, companions, value) {
+            Some(Ok(found)) => Some(found),
+            Some(Err(missing)) => {
+                if !notes.missing_pictures.contains(&missing) {
+                    notes.missing_pictures.push(missing);
+                }
+                None
+            }
+            None => None,
+        };
+        if let Some((image, bytes, wrap, tex_coord)) = found {
             let (index, average) = *averages.entry(image).or_insert_with(|| {
-                model.images.push(bytes.to_vec());
-                (
-                    model.images.len() - 1,
-                    crate::textures::average_colour(bytes),
-                )
+                let bytes = crate::formats::picture_bytes(bytes);
+                let average = bytes.as_deref().and_then(crate::textures::average_colour);
+                model.images.push(bytes.unwrap_or_default());
+                (model.images.len() - 1, average)
             });
             material.texture_color = average;
             // Only a picture the builder can read is kept as a texture.
@@ -484,9 +633,9 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
     let fallback_material = model.materials.len();
     model.materials.push(Material::default());
 
-    let nodes = list(&json, "nodes");
-    let scene = index_of(&json, "scene").unwrap_or(0);
-    let roots: Vec<usize> = match list(&json, "scenes").get(scene) {
+    let nodes = list(json, "nodes");
+    let scene = index_of(json, "scene").unwrap_or(0);
+    let roots: Vec<usize> = match list(json, "scenes").get(scene) {
         Some(scene) => list(scene, "nodes")
             .iter()
             .filter_map(Value::as_u64)
@@ -531,7 +680,7 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
         {
             stack.push((child as usize, matrix, names.clone()));
         }
-        let Some(mesh) = index_of(node, "mesh").and_then(|m| list(&json, "meshes").get(m)) else {
+        let Some(mesh) = index_of(node, "mesh").and_then(|m| list(json, "meshes").get(m)) else {
             continue;
         };
         let flip = determinant(&matrix) < 0.0;
@@ -545,6 +694,15 @@ pub fn read_glb(bytes: &[u8]) -> Result<Model, String> {
                 model.skipped_primitives += 1;
                 continue;
             };
+            let corners = index_of(primitive, "indices")
+                .or(Some(position))
+                .and_then(|a| list(json, "accessors").get(a))
+                .and_then(|a| index_of(a, "count"))
+                .unwrap_or(0);
+            let total = model.triangles().saturating_add(corners / 3);
+            if total > max_triangles {
+                return Err(too_many(max_triangles));
+            }
             let (raw, components) = reader.accessor(position)?;
             if components != 3 {
                 return Err("a mesh's positions are not three numbers each".to_owned());

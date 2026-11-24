@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ComparePanel } from './Compare';
 import { FloorsPanel } from './FloorsPanel';
 import { MapStyleChoice } from './MapStyleChoice';
+import { ModelSetup } from './ModelSetup';
 import { RedrawCard } from './RedrawCard';
 import {
   CATEGORY_LABELS,
@@ -16,6 +17,7 @@ import {
   floorPreviewFile,
   gameHeadline,
   isMakeReport,
+  isModelReport,
   makeSuggestedFileName,
   makeSummaryLine,
   sceneLines,
@@ -187,16 +189,16 @@ function MapMaker() {
   );
 
   const redraw = useCallback(
-    async (pack: string) => {
+    async (pack: string, style: MapStyleId) => {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await api.redrawStart(pack, mapStyle));
+        setStatus(await api.redrawStart(pack, style));
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, mapStyle],
+    [api],
   );
 
   // A make's report stays shown while one of its areas is made again, and when that fails; and while and after
@@ -211,6 +213,8 @@ function MapMaker() {
         : status?.kind === 'redraw'
           ? 'drawing of the maps again'
           : 'check';
+  // A make from a 3D model: its progress is shown under the model's setup.
+  const fromModel = status?.fromModel === true;
   const adjusted = isMakeReport(report)
     ? report.areas.find((area) => area.key === adjusting)
     : null;
@@ -227,7 +231,8 @@ function MapMaker() {
       <p className="mm-intro">
         Makes an Atlas map pack from your own game files, or checks what map data can be read from
         them. It only reads the game folder: nothing there is changed, and nothing is sent anywhere.
-        The map pack stays on this computer, in the folder Atlas reads its maps from.
+        The map pack stays on this computer, in the folder Atlas reads its maps from. It can also
+        make a map from a 3D model you made or exported.
       </p>
       {info && !info.helperFound && (
         <p className="mm-alert mm-bad" role="alert">
@@ -354,10 +359,29 @@ function MapMaker() {
             be flat. Please reinstall the app.
           </p>
         )}
-        {status && status.state !== 'idle' && status.kind !== 'redraw' && (
+        {status && status.state !== 'idle' && !fromModel && status.kind !== 'redraw' && (
           <Progress status={status} />
         )}
       </section>
+
+      <ModelSetup
+        api={api}
+        info={info}
+        running={running}
+        mapStyle={mapStyle}
+        onStarted={(started) => {
+          setSaved(null);
+          setProblem(null);
+          setAdjusting(null);
+          setComparing(null);
+          setStatus(started);
+        }}
+      />
+      {status && status.state !== 'idle' && fromModel && (
+        <section className="mm-card" aria-label="Making the map from the model">
+          <Progress status={status} />
+        </section>
+      )}
 
       {problem && (
         <p className="mm-alert mm-bad" role="alert">
@@ -369,7 +393,9 @@ function MapMaker() {
         <Failure
           status={status}
           onMakeAll={
-            status.kind === 'remake' && status.errorCode ? () => void start('make') : undefined
+            status.kind === 'remake' && status.errorCode && !isModelReport(report)
+              ? () => void start('make')
+              : undefined
           }
         />
       )}
@@ -385,7 +411,14 @@ function MapMaker() {
       {isMakeReport(report) && status?.pack && (
         <section className="mm-card" aria-labelledby="pack-title">
           <h2 id="pack-title">Your map pack is ready</h2>
-          <p>Open the Library in Atlas: the game is listed there.</p>
+          {isModelReport(report) ? (
+            <p>
+              Open the Library in Atlas: {report.game.title} is listed there. It has no locations
+              yet: add them in Atlas with Edit locations.
+            </p>
+          ) : (
+            <p>Open the Library in Atlas: the game is listed there.</p>
+          )}
           <div className="mm-row">
             <span className="mm-path" title={status.pack.folder}>
               {status.pack.folder}
@@ -404,7 +437,9 @@ function MapMaker() {
             </button>
           </div>
           <p className="muted small">
-            It is made from your game files, so keep it to yourself: do not share or upload it.
+            {isModelReport(report)
+              ? 'It is made from your model: share it only if the model is yours to share.'
+              : 'It is made from your game files, so keep it to yourself: do not share or upload it.'}
           </p>
         </section>
       )}
@@ -418,7 +453,7 @@ function MapMaker() {
           running={running}
           helperFound={info.helperFound}
           onMapStyle={setMapStyle}
-          onStart={(pack) => void redraw(pack)}
+          onStart={(pack, style) => void redraw(pack, style)}
           onCancel={() => void cancel()}
           progress={status && status.state !== 'idle' ? <Progress status={status} /> : null}
         />
@@ -482,7 +517,8 @@ function MapMaker() {
           area={adjusted}
           game={report.game.id}
           status={status}
-          make3d={make3d}
+          make3d={isModelReport(report) || make3d}
+          model={isModelReport(report)}
           mapStyle={adjusted.mapStyle ?? report.options?.mapStyle ?? mapStyle}
           remadeAt={
             report.remade?.area === adjusted.key
@@ -495,10 +531,14 @@ function MapMaker() {
           onOverrides={setOverrides}
           onRemake={remake}
           onCancel={() => void cancel()}
-          onMakeAll={() => {
-            setAdjusting(null);
-            void start('make');
-          }}
+          onMakeAll={
+            isModelReport(report)
+              ? undefined
+              : () => {
+                  setAdjusting(null);
+                  void start('make');
+                }
+          }
         />
       )}
       {isMakeReport(report) && compared && !adjusted && (
@@ -800,8 +840,32 @@ interface Adjusting {
   onCompare: (area: string) => void;
 }
 
+/** The model a map was made from, and how it was set up. */
+function ModelLine({ report }: { report: MakeReport }) {
+  const model = report.model!;
+  const [east, north, height] = model.sizeMetres;
+  return (
+    <p className="small">
+      From <span className="mono">{model.file}</span> ({model.format},{' '}
+      {plural(model.triangles, 'triangle')}): {up(model.up)},{' '}
+      {model.units ?? `${model.scale} m per unit`}, {east} × {north} m and {height} m high;{' '}
+      {model.textures === 'plain'
+        ? 'plain colours'
+        : model.texturesFound > 0
+          ? `${plural(model.texturesFound, 'texture')} kept`
+          : 'no textures'}
+      {model.bothSides ? ', faces seen from both sides' : ''}.
+    </p>
+  );
+}
+
+function up(axis: string): string {
+  return `${axis.slice(1).toUpperCase()} ${axis.startsWith('-') ? 'down' : 'up'}`;
+}
+
 function MakeResults({ report, ...adjusting }: { report: MakeReport } & Adjusting) {
   const summary = report.summary;
+  const fromModel = isModelReport(report);
   const made = report.areas.filter((area) => !area.skipped);
   const threeD = report.areas.some((area) => area.scene);
   const remade = report.remade;
@@ -826,7 +890,10 @@ function MakeResults({ report, ...adjusting }: { report: MakeReport } & Adjustin
             .
           </p>
         )}
-        {summary && <p className="small">{categoryCounts(summary.markersByCategory)}.</p>}
+        {summary && categoryCounts(summary.markersByCategory) && (
+          <p className="small">{categoryCounts(summary.markersByCategory)}.</p>
+        )}
+        {report.model && <ModelLine report={report} />}
         {report.warnings.length > 0 && (
           <>
             <h3>Warnings</h3>
@@ -846,20 +913,26 @@ function MakeResults({ report, ...adjusting }: { report: MakeReport } & Adjustin
               <tr>
                 <th scope="col">Area</th>
                 <th scope="col">Floors</th>
-                <th scope="col">Markers</th>
+                {!fromModel && <th scope="col">Markers</th>}
                 {threeD && <th scope="col">3D model</th>}
                 <th scope="col">To look at</th>
               </tr>
             </thead>
             <tbody>
               {report.areas.map((area) => (
-                <MadeAreaRow key={area.id} area={area} threeD={threeD} {...adjusting} />
+                <MadeAreaRow
+                  key={area.id}
+                  area={area}
+                  threeD={threeD}
+                  markers={!fromModel}
+                  {...adjusting}
+                />
               ))}
             </tbody>
           </table>
         </div>
       </section>
-      {made.length > 0 && <FloorPreviews areas={made} {...adjusting} />}
+      {made.length > 0 && <FloorPreviews areas={made} markers={!fromModel} {...adjusting} />}
     </>
   );
 }
@@ -899,8 +972,9 @@ function CompareButton({ area, running, onCompare }: { area: MadeArea } & Adjust
 function MadeAreaRow({
   area,
   threeD,
+  markers,
   ...adjusting
-}: { area: MadeArea; threeD: boolean } & Adjusting) {
+}: { area: MadeArea; threeD: boolean; markers: boolean } & Adjusting) {
   const notes = areaNotes(area);
   const floors = area.floors ?? [];
   const cuts = cutsLine(area);
@@ -940,16 +1014,18 @@ function MadeAreaRow({
         <AdjustButton area={area} {...adjusting} />
         <CompareButton area={area} {...adjusting} />
       </td>
-      <td className="small">
-        {area.markers ? (
-          <>
-            <div>{count(area.markers.total)}</div>
-            <div className="muted">{categoryCounts(area.markers.byCategory)}</div>
-          </>
-        ) : (
-          '–'
-        )}
-      </td>
+      {markers && (
+        <td className="small">
+          {area.markers ? (
+            <>
+              <div>{count(area.markers.total)}</div>
+              <div className="muted">{categoryCounts(area.markers.byCategory)}</div>
+            </>
+          ) : (
+            '–'
+          )}
+        </td>
+      )}
       {threeD && (
         <td className="small">
           {area.scene
@@ -976,7 +1052,11 @@ function MadeAreaRow({
   );
 }
 
-function FloorPreviews({ areas, ...adjusting }: { areas: MadeArea[] } & Adjusting) {
+function FloorPreviews({
+  areas,
+  markers,
+  ...adjusting
+}: { areas: MadeArea[]; markers: boolean } & Adjusting) {
   const api = shell!;
   const [images, setImages] = useState<Record<string, string>>({});
   const loading = useRef(new Set<string>());
@@ -1001,21 +1081,24 @@ function FloorPreviews({ areas, ...adjusting }: { areas: MadeArea[] } & Adjustin
     <section className="mm-card" aria-labelledby="previews-title">
       <h2 id="previews-title">Floors</h2>
       <p className="muted small">
-        Small copies of the map pictures, north (+z) up: lighter where higher, walls in dark lines,
-        the floors below faded. Dots are markers on that floor.
+        {markers
+          ? 'Small copies of the map pictures, north (+z) up: lighter where higher, walls in dark lines, the floors below faded. Dots are markers on that floor.'
+          : 'Small copies of the map pictures, north up: each floor from above with everything over it cut away, walls in dark lines, the floors below faded.'}
       </p>
-      <ul className="mm-legend small">
-        {PREVIEW_LEGEND.map(([category, colour]) => (
-          <li key={category}>
-            <span className="mm-swatch" style={{ background: colour }} />
-            {CATEGORY_LABELS[category]}
+      {markers && (
+        <ul className="mm-legend small">
+          {PREVIEW_LEGEND.map(([category, colour]) => (
+            <li key={category}>
+              <span className="mm-swatch" style={{ background: colour }} />
+              {CATEGORY_LABELS[category]}
+            </li>
+          ))}
+          <li>
+            <span className="mm-swatch" style={{ background: 'var(--mm-dot-item)' }} />
+            Other items
           </li>
-        ))}
-        <li>
-          <span className="mm-swatch" style={{ background: 'var(--mm-dot-item)' }} />
-          Other items
-        </li>
-      </ul>
+        </ul>
+      )}
       <div className="mm-previews">
         {areas.flatMap((area) =>
           (area.floors ?? []).map((floor, index) => {

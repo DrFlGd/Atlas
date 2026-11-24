@@ -1,7 +1,7 @@
 [package]
 name = "atlas-scene"
 version = "0.2.0"
-description = "Builds the 3D model of an Atlas map from a raw glTF model: lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
+description = "Builds the 3D model of an Atlas map from a raw glTF model or a model file (glTF, OBJ, STL, PLY): lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
 edition = "2021"
 license = "MIT"
 rust-version = "1.90"
@@ -38,7 +38,12 @@ zune-core = { version = "=0.5.3", default-features = false, features = ["std"] }
 # Keeping a model's textures (`textures`, mode `keep`): resizing them and
 # writing them again as PNG or JPEG, in pure Rust (the same crate and
 # version the desktop shell has already). MIT OR Apache-2.0.
-image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
+# Also TGA and BMP, which OBJ models often use for their textures (turned
+# into PNG once, `formats`).
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "bmp", "tga"] }
+# Reading Wavefront OBJ models with their materials (`formats`), in pure
+# Rust, without its default hashing crate. MIT.
+tobj = { version = "=4.0.5", default-features = false }
 
 [profile.release]
 codegen-units = 1

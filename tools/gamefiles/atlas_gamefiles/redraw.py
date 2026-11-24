@@ -32,7 +32,6 @@ import json
 import math
 import re
 import shutil
-import struct
 import subprocess
 import sys
 import time
@@ -49,8 +48,8 @@ from .events import Events
 from .floors import FloorPlan, locate, plan_floors, prepare
 from .pack import FILES, WRITER, collection_text, content_counts, floor_names, layer_order, now, read_pack_json
 from .passages import plan_passages, prepare_passages
-from .render import BACKGROUND, MapStyle, SurfaceTextures, compose, draw_floor, map_style
-from .scene import CREATE_NO_WINDOW, check_pack, find_builder, floor_heights
+from .render import BACKGROUND, MAP_STYLES, MapStyle, compose, draw_floor, map_style
+from .scene import CREATE_NO_WINDOW, BuilderFailed, check_pack, find_builder, floor_heights, run_builder
 from .tiles import tile_format, write_pyramid
 
 STAGING = ".{}.redraw"
@@ -60,7 +59,6 @@ UNPACK_TIME_LIMIT = 600.0
 AREA_KEY = re.compile(r"m\d\d_\d\d")
 # A layer's tiles: a plain folder path, then `{z}/{x}/{y}.<png|webp>`.
 TILE_URL = re.compile(r"^((?:[A-Za-z0-9_][A-Za-z0-9_.\-]*/)+)\{z\}/\{x\}/\{y\}\.(png|webp)$")
-ALPHA_MODES = ("OPAQUE", "MASK", "BLEND")
 
 
 class RedrawError(Exception):
@@ -75,113 +73,25 @@ class Skip(Exception):
 # The model, as `atlas-scene unpack` writes it.
 
 
+# How the builder reads the model `unpack` writes: positions are (world x, height, world y), in metres.
+UNPACKED_AXES = ["+x", "+z", "+y"]
+
+
 @dataclass
 class PackModel:
-    """A map's model: triangles (n, 3, 3) in (world x, height, world y), and their look (None when the model says
-    nothing but colours)."""
+    """A map's model: triangles (n, 3, 3) in (world x, height, world y), as the builder reads them from the raw model
+    `atlas-scene unpack` wrote (`file`, kept for `atlas-scene draw`); `colours` when it has colours or textures of its
+    own."""
 
     triangles: np.ndarray
-    surface: SurfaceTextures
+    file: Path
+    colours: bool
     report: dict[str, tp.Any]
 
 
-def read_unpacked(data: bytes) -> tuple[np.ndarray, SurfaceTextures]:
-    """The triangles and their look from the raw model `atlas-scene unpack` writes: plain glTF binary, one mesh per
-    material, 32-bit float positions (x, height, y), colours (RGBA) and texture coordinates, 32-bit indices."""
-    magic, version, total = struct.unpack_from("<4sII", data, 0)
-    if magic != b"glTF" or version != 2 or total != len(data):
-        raise ValueError("the unpacked model is not a glTF binary file")
-    json_length, kind = struct.unpack_from("<I4s", data, 12)
-    if kind != b"JSON":
-        raise ValueError("the unpacked model has no JSON chunk")
-    document = json.loads(data[20 : 20 + json_length])
-    start = 20 + json_length
-    binary = b""
-    if start + 8 <= len(data):
-        bin_length, kind = struct.unpack_from("<I4s", data, start)
-        if kind == b"BIN\0":
-            binary = data[start + 8 : start + 8 + bin_length]
-    views = document.get("bufferViews", [])
-    accessors = document.get("accessors", [])
-    sizes = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}
-
-    def values(index: int) -> np.ndarray:
-        accessor = accessors[index]
-        width = sizes[accessor["type"]]
-        dtype = {5126: "<f4", 5125: "<u4"}[accessor["componentType"]]
-        view = views[accessor["bufferView"]]
-        offset = int(view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
-        count = int(accessor["count"])
-        out = np.frombuffer(binary, dtype=dtype, count=count * width, offset=offset)
-        return out.reshape(count, width) if width > 1 else out
-
-    images = tuple(
-        bytes(binary[int(views[image["bufferView"]].get("byteOffset", 0)) :][: int(views[image["bufferView"]]["byteLength"])])
-        for image in document.get("images", [])
-    )
-    textures = document.get("textures", [])
-    samplers = document.get("samplers", [])
-    materials = []
-    for material in document.get("materials", []):
-        pbr = material.get("pbrMetallicRoughness", {})
-        texture = pbr.get("baseColorTexture")
-        image = wrap = None
-        if isinstance(texture, dict) and 0 <= int(texture.get("index", -1)) < len(textures):
-            entry = textures[int(texture["index"])]
-            image = entry.get("source")
-            sampler = samplers[entry["sampler"]] if "sampler" in entry and entry["sampler"] < len(samplers) else {}
-            wrap = (int(sampler.get("wrapS", 10497)), int(sampler.get("wrapT", 10497)))
-        alpha = material.get("alphaMode", "OPAQUE")
-        materials.append(
-            {
-                "name": material.get("name", ""),
-                "colour": tuple(float(v) for v in pbr.get("baseColorFactor", (1.0, 1.0, 1.0, 1.0))),
-                "image": image,
-                "wrap": wrap,
-                "alpha": alpha if alpha in ALPHA_MODES else "OPAQUE",
-                "alphaCutoff": float(material.get("alphaCutoff", 0.5)),
-                "doubleSided": bool(material.get("doubleSided", False)),
-            }
-        )
-    triangles, uvs, colours, owners = [], [], [], []
-    any_colours = False
-    for mesh in document.get("meshes", []):
-        for primitive in mesh.get("primitives", []):
-            if primitive.get("mode", 4) != 4:
-                continue
-            attributes = primitive["attributes"]
-            positions = values(attributes["POSITION"]).astype(np.float32)
-            indices = values(primitive["indices"]).astype(np.int64) if "indices" in primitive else np.arange(len(positions))
-            indices = indices[: len(indices) // 3 * 3].reshape(-1, 3)
-            if len(indices) and int(indices.max()) >= len(positions):
-                raise ValueError("the unpacked model names a vertex it does not have")
-            triangles.append(positions[indices])
-            uv = values(attributes["TEXCOORD_0"]) if "TEXCOORD_0" in attributes else np.zeros((len(positions), 2), np.float32)
-            uvs.append(uv.astype(np.float32)[indices])
-            if "COLOR_0" in attributes:
-                any_colours = True
-                colour = values(attributes["COLOR_0"]).astype(np.float32)
-                if colour.shape[1] == 3:
-                    colour = np.concatenate([colour, np.ones((len(colour), 1), np.float32)], axis=1)
-            else:
-                colour = np.ones((len(positions), 4), np.float32)
-            colours.append(colour[indices])
-            owners.append(np.full(len(indices), int(primitive.get("material", 0)), dtype=np.int32))
-    if not triangles:
-        empty = np.zeros((0, 3, 3), np.float32)
-        return empty, SurfaceTextures(np.zeros((0, 3, 2), np.float32), np.zeros(0, np.int32), None, tuple(materials), images)
-    surface = SurfaceTextures(
-        np.concatenate(uvs),
-        np.concatenate(owners),
-        np.concatenate(colours) if any_colours else None,
-        tuple(materials),
-        images,
-    )
-    return np.concatenate(triangles), surface
-
-
 def unpack_model(builder: Path, pack: Path, map_id: str, work: Path, stop: tp.Callable[[], None]) -> PackModel:
-    """The model of `map_id` in `pack`, read out by the builder (`atlas-scene unpack`) into `work`."""
+    """The model of `map_id` in `pack`, read out of the pack by the builder (`atlas-scene unpack`) into `work` as one
+    raw model, then read as any model file is (`atlas-scene triangles`, as Make a map from a 3D model reads one)."""
     work.mkdir(parents=True, exist_ok=True)
     output = work / "model.glb"
     output.unlink(missing_ok=True)
@@ -209,13 +119,53 @@ def unpack_model(builder: Path, pack: Path, map_id: str, work: Path, stop: tp.Ca
             failure = str(message.get("message", ""))
     if done is None or result.returncode != 0 or not output.is_file():
         raise Skip(f"its 3D model could not be read ({failure or f'the builder ended with code {result.returncode}'})")
+    triangles_file = work / "triangles.bin"
     try:
-        triangles, surface = read_unpacked(output.read_bytes())
-    except (OSError, ValueError, KeyError, IndexError, TypeError, struct.error) as error:
+        read = run_builder(
+            builder,
+            {"input": output.name, "output": triangles_file.name, "options": {"axes": UNPACKED_AXES, "scale": 1.0}},
+            work,
+            "triangles",
+            lambda fraction, text: None,
+            stop,
+            command="triangles",
+        )
+        triangles = np.fromfile(triangles_file, dtype="<f4").reshape(-1, 3, 3)
+    except BuilderFailed as error:
+        raise Skip(f"its 3D model could not be read ({error})") from None
+    except (OSError, ValueError) as error:
         raise Skip(f"its 3D model could not be read ({type(error).__name__}: {error})") from None
     finally:
-        output.unlink(missing_ok=True)
-    return PackModel(triangles, surface, done.get("report") or {})
+        triangles_file.unlink(missing_ok=True)
+    info = read.get("info") or {}
+    return PackModel(triangles, output, bool(info.get("hasColours")), done.get("report") or {})
+
+
+def draw_textured(
+    builder: Path, model: PackModel, frame: MapFrame, plan: FloorPlan, count: int, work: Path, stop: tp.Callable[[], None]
+) -> list[Path]:
+    """Each floor drawn from above in the model's own textures and colours by the builder (`atlas-scene draw`, as
+    Make a map from a 3D model draws them), one picture per floor at the map's size; BuilderFailed when it cannot."""
+    box = frame.box()
+    if box is None:
+        raise BuilderFailed("the map is turned against the world, which the textured styles do not draw yet")
+    floors_file = work / "floors.bin"
+    plan.triangle_floor.astype("<i2").tofile(floors_file)
+    drawn = work / "drawn"
+    shutil.rmtree(drawn, ignore_errors=True)
+    job = {
+        "input": model.file.name,
+        "output": drawn.name,
+        "options": {"axes": UNPACKED_AXES, "scale": 1.0, "colouring": "textures"},
+        "frame": {**box, "width": frame.width, "height": frame.height},
+        "floors": floors_file.name,
+        "count": count,
+    }
+    try:
+        done = run_builder(builder, job, work, "draw", lambda fraction, text: None, stop, command="draw")
+    finally:
+        floors_file.unlink(missing_ok=True)
+    return [drawn / str(name) for name in done.get("files", [])]
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -250,6 +200,13 @@ class MapFrame:
 
     def to_world(self, px: float, py: float) -> tuple[float, float]:
         return self.a * px + self.c * py + self.e, self.b * px + self.d * py + self.f
+
+    def box(self) -> dict[str, float] | None:
+        """The frame as render.Frame and `atlas-scene draw` take it (right is +x and up is +y, square pixels):
+        `xMin`, `zMax` and `scale`; None for a map turned or stretched against the world."""
+        if self.b != 0 or self.c != 0 or self.a <= 0 or not math.isclose(self.d, -self.a, rel_tol=1e-9):
+            return None
+        return {"xMin": self.e, "zMax": self.f, "scale": 1.0 / self.a}
 
 
 def map_frame(entry: dict[str, tp.Any]) -> MapFrame:
@@ -389,7 +346,8 @@ class Redrawer:
         self.warnings: list[str] = []
         self.started = time.monotonic()
         try:
-            self.style: MapStyle = map_style(style)
+            # A pack's own model can be drawn in its textures and colours, as a map made from a model.
+            self.style: MapStyle = map_style(style, model=True)
         except ValueError as error:
             raise RedrawError(str(error)[:1].upper() + str(error)[1:] + ".") from None
         self.staging = self.pack.with_name(STAGING.format(self.pack.name))
@@ -643,24 +601,46 @@ class Redrawer:
         else:
             ordered = [targets[i] for i in layer_order(floors, choice.main)]
 
-        # The pictures, each floor over the faded ones below it, cut into its layer's tiles.
-        surface = model.surface
+        # The pictures, each floor over the faded ones below it, cut into its layer's tiles. The textured styles have
+        # the builder draw each floor in the model's own textures and colours; a model with neither, or a map turned
+        # against the world, is height shaded (with outlines when asked).
+        style = self.style
+        fills: list[Path] | None = None
+        if style.textured:
+            plain = MAP_STYLES["outlines" if style.outlines else "shaded"]
+            if not model.colours:
+                self.warn(f"{name}: its 3D model has no colours or textures of its own, so its floors are drawn {plain.label.lower()}")
+                style = plain
+            else:
+                say(0.3, "drawing its floors in the model's textures")
+                try:
+                    fills = draw_textured(builder, model, frame, plan, len(floors), work_folder, self.token.stop)
+                except BuilderFailed as error:
+                    self.warn(f"{name}: its floors could not be drawn with the model's textures ({error}), so they are drawn {plain.label.lower()}")
+                    style = plain
+        line["mapStyle"] = style.id
         low, high = (np.percentile(mesh[plan.walkable][:, :, 1], [2, 98]) if plan.walkable.any() else (0.0, 1.0))
 
         def pictures() -> tp.Iterator[tuple[int, tp.Any]]:
             for floor in floors:
                 chosen = np.flatnonzero(plan.triangle_floor == floor.index)
                 walls = plan.wall_lines[floor.index] if floor.index < len(plan.wall_lines) else np.zeros((0, 2, 2))
+                fill = None
+                if fills is not None and floor.index < len(fills):
+                    from PIL import Image
+
+                    with Image.open(fills[floor.index]) as drawn:
+                        fill = drawn.convert("RGBA")
                 yield floor.index, draw_floor(
                     frame,
-                    self.style,
+                    style,
                     mesh[chosen],
                     walls,
                     index=floor.index,
                     floor_range=(floor.low, floor.high),
                     area_range=(float(low), float(high)),
                     flipped=plan.flipped,
-                    surface=surface.subset(chosen),
+                    fill=fill,
                 )
 
         tiles: dict[str, dict[str, tp.Any]] = {}

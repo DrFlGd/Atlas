@@ -17,7 +17,7 @@ from atlas_gamefiles.check import CancelToken
 from atlas_gamefiles.events import Events
 from atlas_gamefiles.geometry import Cancelled
 from atlas_gamefiles.make import MapMaker
-from atlas_gamefiles.redraw import MapFrame, RedrawError, Redrawer, read_unpacked, tile_folder
+from atlas_gamefiles.redraw import MapFrame, RedrawError, Redrawer, tile_folder
 from atlas_gamefiles.render import FLOOR_PALETTE, draw_floor, floor_triangle_colours, map_style
 from atlas_gamefiles.scene import check_pack
 from atlas_gamefiles.worker import InlineRunner
@@ -165,7 +165,9 @@ def test_a_pack_from_elsewhere_keeps_its_layers(made_pack: Path, builder: Path, 
     assert load(pack, "manifest.json")["writtenBy"] == {"name": "Another app", "version": "1.0"}
 
 
-def test_cancel_and_failures_leave_the_pack_as_it_was(made_pack: Path, builder: Path, tmp_path: Path) -> None:  # noqa: F811
+def test_cancel_and_failures_leave_the_pack_as_it_was(
+    made_pack: Path, builder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch  # noqa: F811
+) -> None:
     pack = copy_of(made_pack, tmp_path)
     before = snapshot(pack)
     token = CancelToken()
@@ -180,10 +182,11 @@ def test_cancel_and_failures_leave_the_pack_as_it_was(made_pack: Path, builder: 
         Redrawer(pack, tmp_path / "out", CancelWhileDrawing(io.StringIO()), token=token, scene_builder=builder).run()
     assert snapshot(pack) == before
     assert sorted(p.name for p in pack.parent.iterdir()) == [PACK]
-    with pytest.raises(RedrawError, match="textures"):
-        Redrawer(pack, tmp_path / "out", Events(io.StringIO()), style="textured", scene_builder=builder)
+    with pytest.raises(RedrawError, match="no map style"):
+        Redrawer(pack, tmp_path / "out", Events(io.StringIO()), style="watercolour", scene_builder=builder)
     with pytest.raises(RedrawError, match="could not be read"):
         Redrawer(tmp_path / "nothing", tmp_path / "out", Events(io.StringIO()), scene_builder=builder).run()
+    monkeypatch.delenv("ATLAS_SCENE_BUILDER", raising=False)
     with pytest.raises(RedrawError, match="3D builder"):
         Redrawer(pack, tmp_path / "out", Events(io.StringIO()), scene_builder=tmp_path / "no-builder").run()
     # Model files that are not ones: those maps are left, with why.
@@ -228,14 +231,21 @@ def test_colour_by_floor_is_a_style() -> None:
     assert np.abs(middle / middle.max() - colour / colour.max()).max() < 0.08
 
 
-def test_reads_an_unpacked_model() -> None:
-    from atlas_gamefiles.scene import raw_glb
+def test_textured_styles_draw_with_the_builder(made_pack: Path, builder: Path, tmp_path: Path) -> None:  # noqa: F811
+    # The pack's own model, read back out by the builder, is drawn in its own colours by `atlas-scene draw`, as a
+    # map made from a model is; the pack stays valid.
+    pack = copy_of(made_pack, tmp_path)
+    before = snapshot(pack)
+    report, events = redraw(pack, tmp_path / "out", builder, style="textured-outlines", only_maps=[ANOR])
+    line = next(e for e in events if e["event"] == "map" and e["id"] == ANOR)
+    assert line["redrawn"] is True and line["floors"] == 2
+    assert report["options"]["mapStyle"] == "textured-outlines"
+    drawn = next(m for m in report["maps"] if m["id"] == ANOR)
+    assert drawn["mapStyle"] == "textured-outlines", report["warnings"]
+    assert tiles_of(snapshot(pack), "m15_01") != tiles_of(before, "m15_01")
+    assert check_pack(builder, pack)["problems"] == []
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == ["report.json"]
+    # A map turned against the world is not drawn by the builder: no box for it.
+    assert MapFrame(0.5, 0.25, -0.25, 0.5, 10.0, 20.0, width=100, height=80).box() is None
+    assert MapFrame(0.5, 0.0, 0.0, -0.5, 10.0, 20.0, width=100, height=80).box() == {"xMin": 10.0, "zMax": 20.0, "scale": 2.0}
 
-    triangles = np.array([[[0, 1, 0], [1, 1, 0], [0, 1, 1]]], dtype=np.float32)
-    colours = np.full((1, 3, 3), 0.5, dtype=np.float32)
-    read, surface = read_unpacked(raw_glb(triangles, colours, np.zeros(1, np.int32), ["a"], flipped=False))
-    assert np.array_equal(read, triangles)
-    assert surface.colours is not None and surface.colours.shape == (1, 3, 4)
-    assert surface.material.tolist() == [0] and surface.materials[0]["doubleSided"] is True
-    with pytest.raises(ValueError):
-        read_unpacked(b"glTF" + b"\0" * 16)

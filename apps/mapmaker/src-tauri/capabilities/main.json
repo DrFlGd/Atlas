@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main",
-  "description": "The main window only: the Map Maker's own commands (app information, the folder and save dialogs, starting, following and cancelling a check, a make, the making of one area again or the drawing of a pack again from its 3D models (and the list of packs with 3D maps), reading its preview pictures, saving the report and showing it or the made map pack in its folder, the player's floor cuts and their file dialogs, and the floor views of the Adjust floors panel). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
+  "description": "The main window only: the Map Maker's own commands (app information, the folder, model file and save dialogs, reading a chosen 3D model, starting, following and cancelling a check, a make (of game files or of a 3D model), the making of one area again or the drawing of a pack again from its 3D models (and the list of packs with 3D maps), reading its preview pictures, saving the report and showing it or the made map pack in its folder, the player's floor cuts and their file dialogs, and the floor views of the Adjust floors panel). No plugin commands are granted; the dialog and opener plugins are only used from Rust.",
   "windows": ["main"],
   "permissions": [
     "allow-app-info",
@@ -11,6 +11,9 @@
     "allow-check-cancel",
     "allow-make-start",
     "allow-remake-start",
+    "allow-choose-model",
+    "allow-model-inspect",
+    "allow-model-make-start",
     "allow-restore-last-make",
     "allow-redraw-packs",
     "allow-redraw-start",

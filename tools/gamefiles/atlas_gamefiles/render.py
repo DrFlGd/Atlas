@@ -14,9 +14,12 @@ above this floor.
 The map style (`MAP_STYLES`) chooses how: "Height shaded" as above; "Height shaded with outlines" draws the
 collision boundaries (the walls and the edges of the walkable floor) as clear light lines; "Colour by floor" gives
 each floor its own colour (`FLOOR_PALETTE`, the colours the 3D view's "Floor colours" uses), darker low and lighter
-high within that floor. The textured styles need the game's textures, which are not read yet: they are listed, and
-refused, so that the windows can show them. `draw_floor` is the one place a style becomes a floor's picture: Make
-map and "Draw all areas again" (redraw.py) both draw through it.
+high within that floor. The textured styles need the game's textures, which are not read yet: for game files they
+are listed, and refused, so that the windows can show them. A map made from a 3D model can be drawn in them
+(`map_style(…, model=True)`): each floor is drawn in the model's own colours and textures by the 3D builder
+(`atlas-scene draw`) and given here as the floor's picture (`draw_layer`'s `fill`), with the rim, walls and outlines
+drawn over it as for the other styles. `draw_floor` is the one place a style becomes a floor's picture: Make map and
+"Draw all areas again" (redraw.py) both draw through it.
 
 Seen from above: right is +x and up is +z, so a world point (x, z) is at pixel ((x - xMin) * s, (zMax - z) * s)
 for `s` pixels per metre, and the map's `worldTransform` is the inverse (pixel to world x, z).
@@ -83,11 +86,14 @@ MAP_STYLES = {
 DEFAULT_STYLE = "shaded"
 
 
-def map_style(name: str | None) -> MapStyle:
-    """The style called `name` (the default without one); ValueError for an unknown one or one not available."""
+def map_style(name: str | None, model: bool = False) -> MapStyle:
+    """The style called `name` (the default without one); ValueError for an unknown one or one not available. With
+    `model` (a map made from a 3D model), the textured styles are available too."""
     style = MAP_STYLES.get(name or DEFAULT_STYLE)
     if style is None:
         raise ValueError(f"there is no map style {name!r}; the styles are {', '.join(MAP_STYLES)}")
+    if model and style.textured:
+        return MapStyle(style.id, style.label, style.outlines, True, True)
     if not style.available:
         raise ValueError(f"the map style {style.label!r} is not available: {style.note}")
     return style
@@ -210,31 +216,6 @@ def floor_triangle_colours(triangles: np.ndarray, index: int, low: float, high: 
     return np.clip(rgb, 0, 255).astype(np.uint8).reshape(-1, 3)
 
 
-@dataclass(frozen=True)
-class SurfaceTextures:
-    """What a model says of the look of its triangles, for the textured styles: per triangle its corners' texture
-    coordinates (`uvs`, (n, 3, 2)), its material (`material`, (n,), an index into `materials`) and its corners'
-    vertex colours (`colours`, (n, 3, 4) linear RGBA, or None); per material its colour (`colour`, linear RGBA),
-    its picture (`image`, an index into `images`, or None), the picture's wrap (`wrap`, glTF's) and alpha mode
-    (`alpha`: "OPAQUE", "MASK" or "BLEND", with `alphaCutoff`); `images` holds each picture's PNG or JPEG bytes."""
-
-    uvs: np.ndarray
-    material: np.ndarray
-    colours: np.ndarray | None
-    materials: tuple[dict[str, tp.Any], ...]
-    images: tuple[bytes, ...]
-
-    def subset(self, chosen: np.ndarray) -> SurfaceTextures:
-        """The same for the triangles `chosen` (indices) only."""
-        return SurfaceTextures(
-            self.uvs[chosen],
-            self.material[chosen],
-            None if self.colours is None else self.colours[chosen],
-            self.materials,
-            self.images,
-        )
-
-
 def draw_floor(
     frame: Frame,
     style: MapStyle,
@@ -245,13 +226,15 @@ def draw_floor(
     floor_range: tuple[float, float],
     area_range: tuple[float, float],
     flipped: bool,
-    surface: SurfaceTextures | None = None,
+    fill: tp.Any = None,
 ) -> tp.Any:
     """One floor's layer in the map style: its walkable `triangles` coloured as the style says (on the area's height
     ramp over `area_range`, or in the floor's own colour over `floor_range`), then drawn with its walls
-    (`draw_layer`). `frame` is any frame with `to_pixels`, `scale`, `width` and `height`. `surface` is the look of
-    the triangles when the model has one (a pack's own model with textures, see redraw.py), for the textured
-    styles; the styles drawn by height or by floor do not need it."""
+    (`draw_layer`). `frame` is any frame with `to_pixels`, `scale`, `width` and `height`. `fill` is the floor
+    already drawn in a textured style (by `atlas-scene draw`, from the model's own textures and colours: model.py,
+    redraw.py), used in place of the triangles' colours."""
+    if fill is not None and style.textured:
+        return draw_layer(frame, triangles, np.zeros((len(triangles), 3), dtype=np.uint8), walls, style, fill=fill)
     if style.by_floor:
         colours = floor_triangle_colours(triangles, index, float(floor_range[0]), float(floor_range[1]), flipped)
     else:
@@ -265,21 +248,30 @@ def draw_layer(
     colours: np.ndarray,
     walls: np.ndarray,
     style: MapStyle | None = None,
+    fill: tp.Any = None,
 ) -> tp.Any:
     """One floor alone, on a transparent picture: its triangles (lowest first, so higher ones are drawn over
-    them), its rim and its walls; with outlines (the style's), the rim and walls as light lines on a dark edge."""
+    them), its rim and its walls; with outlines (the style's), the rim and walls as light lines on a dark edge.
+    `fill`, when given, is the floor already drawn (an RGBA picture of the frame's size, clear where nothing is: a
+    textured style's), used in place of the triangles' colours."""
     from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
     outlines = style is not None and style.outlines
 
-    layer = Image.new("RGBA", (frame.width, frame.height), (0, 0, 0, 0))
+    if fill is not None:
+        layer = fill.convert("RGBA")
+        if layer.size != (frame.width, frame.height):
+            layer = layer.resize((frame.width, frame.height))
+    else:
+        layer = Image.new("RGBA", (frame.width, frame.height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(layer)
-    if len(triangles):
-        order = np.argsort(triangles[:, :, 1].mean(axis=1), kind="stable")
-        pixels = frame.to_pixels(triangles[order][:, :, [0, 2]].reshape(-1, 2)).reshape(-1, 3, 2)
-        fills = colours[order]
-        for corners, fill in zip(pixels.round(2).tolist(), fills.tolist()):
-            draw.polygon([tuple(p) for p in corners], fill=(fill[0], fill[1], fill[2], 255))
+    if len(triangles) or fill is not None:
+        if fill is None:
+            order = np.argsort(triangles[:, :, 1].mean(axis=1), kind="stable")
+            pixels = frame.to_pixels(triangles[order][:, :, [0, 2]].reshape(-1, 2)).reshape(-1, 3, 2)
+            fills = colours[order]
+            for corners, colour in zip(pixels.round(2).tolist(), fills.tolist()):
+                draw.polygon([tuple(p) for p in corners], fill=(colour[0], colour[1], colour[2], 255))
         alpha = layer.getchannel("A")
         if outlines:
             # Two light pixels at the edge, with a dark one inside them so they stand out on light floor too.
