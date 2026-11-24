@@ -1,7 +1,9 @@
 //! Atlas Map Maker: one window that checks a player's own game files with the bundled helper
 //! (`atlas-gamefiles`, tools/gamefiles), shows what map data can be read, and makes a map pack from them for the
 //! Atlas viewer, and lets the player adjust where an area's floors are cut and make that area again. It also makes a
-//! map from a 3D model file (glTF, OBJ, STL or PLY), read by the bundled 3D builder (`atlas-scene`).
+//! map from a 3D model file (glTF, OBJ, STL, PLY or ActorX), read by the bundled 3D builder (`atlas-scene`), or from a
+//! game level the player exported from their own game (FModel's JSON of an Unreal Engine level, a Unity scene), put
+//! together by the helper.
 
 pub mod checks;
 mod commands;
@@ -33,6 +35,7 @@ pub fn run() {
             commands::make_start,
             commands::remake_start,
             commands::choose_model,
+            commands::choose_level_folder,
             commands::model_inspect,
             commands::model_make_start,
             commands::restore_last_make,

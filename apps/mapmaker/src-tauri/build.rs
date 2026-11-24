@@ -8,6 +8,7 @@ const COMMANDS: &[&str] = &[
     "make_start",
     "remake_start",
     "choose_model",
+    "choose_level_folder",
     "model_inspect",
     "model_make_start",
     "restore_last_make",

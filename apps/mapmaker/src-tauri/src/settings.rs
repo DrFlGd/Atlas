@@ -76,6 +76,23 @@ pub struct ModelSetup {
     pub allow_large: bool,
     /// How the floors are drawn (MODEL_MAP_STYLES).
     pub map_style: String,
+    /// Ground area: each floor is cut this far below it (metres); `None` for the helper's own (1.5).
+    #[serde(default)]
+    pub cut_below: Option<f64>,
+    /// A game level: meshes smaller than this (metres) are left out; `None` or 0 keeps them all.
+    #[serde(default)]
+    pub clutter: Option<f64>,
+    /// A game level: hidden and collision-only surfaces are left out (the default).
+    #[serde(default = "yes")]
+    pub leave_out_hidden: bool,
+    /// A game level: the folder of its exported files, as chosen with the folder dialog; `None` to find it from
+    /// the level's own place. Set by the app from the folder chosen, never by the page.
+    #[serde(default)]
+    pub assets: Option<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// The triangles a model may have, and with "Allow very large models" (as atlas-scene's formats.rs).
@@ -146,6 +163,8 @@ impl ModelSetup {
         };
         within(self.floor_separation, 0.5, 50.0, "floor separation")?;
         within(self.merge_gap, 0.0, 20.0, "merge gap")?;
+        within(self.cut_below, 0.0, 10.0, "cut below each floor")?;
+        within(self.clutter, 0.0, 100.0, "clutter size")?;
         Ok(ModelSetup {
             name: self.name.trim().to_owned(),
             title: self.title.trim().to_owned(),
@@ -416,6 +435,10 @@ mod tests {
             merge_gap: None,
             allow_large: false,
             map_style: "textured".into(),
+            cut_below: Some(1.0),
+            clutter: Some(0.5),
+            leave_out_hidden: true,
+            assets: None,
         }
     }
 
@@ -462,6 +485,14 @@ mod tests {
                 map_style: "watercolour".into(),
                 ..setup()
             },
+            ModelSetup {
+                cut_below: Some(-1.0),
+                ..setup()
+            },
+            ModelSetup {
+                clutter: Some(f64::INFINITY),
+                ..setup()
+            },
         ] {
             assert!(bad.clone().checked().is_err(), "{bad:?}");
         }
@@ -482,9 +513,18 @@ mod tests {
         assert_eq!(read(&file), settings);
         let text = fs::read_to_string(&file).unwrap();
         assert!(
-            text.contains("doubleSided") && text.contains("allowLarge"),
+            text.contains("doubleSided")
+                && text.contains("allowLarge")
+                && text.contains("cutBelow")
+                && text.contains("leaveOutHidden"),
             "{text}"
         );
+        // A setup kept by an earlier version, without the level settings: hidden surfaces are left out.
+        let older: ModelSetup = serde_json::from_str(
+            r#"{"name":"A","title":"A","up":"+y","scale":1,"units":"metres","textures":"keep","doubleSided":"auto","floors":"ground","mapStyle":"shaded"}"#,
+        )
+        .unwrap();
+        assert!(older.leave_out_hidden && older.clutter.is_none() && older.cut_below.is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 }
