@@ -2658,16 +2658,28 @@ mod tests {
         assert_eq!(done.state, JobState::Done, "{:?}", done.reason);
 
         let asked: Vec<String> = server.seen().into_iter().map(|s| s.path).collect();
-        // The middle of level 1 first (two requests go out together, so
-        // either may arrive first), all of level 1 before level 2, and the
-        // middle of level 2 first.
+        // The middle of level 1 first, all of level 1 before level 2, and the
+        // middle of level 2 first. Two requests are in flight at once, and a
+        // request sent first can reach the server after the one sent next and
+        // the one sent after that (seen on Windows runners), so each "first"
+        // is checked among the first few to arrive: level 1's single middle
+        // tile among its first three, and level 2's four middle tiles (sent
+        // first, in this order) as its first four.
         assert!(
-            asked[..2].contains(&"/remote/4/2/3.png".to_owned()),
+            asked[..3].contains(&"/remote/4/2/3.png".to_owned()),
             "{asked:?}"
         );
         assert!(asked[..9].iter().all(|path| path.starts_with("/remote/4/")));
-        assert!(
-            asked[9..11].contains(&"/remote/5/4/6.png".to_owned()),
+        let mut middle: Vec<&str> = asked[9..13].iter().map(String::as_str).collect();
+        middle.sort_unstable();
+        assert_eq!(
+            middle,
+            [
+                "/remote/5/4/6.png",
+                "/remote/5/4/7.png",
+                "/remote/5/5/6.png",
+                "/remote/5/5/7.png"
+            ],
             "{asked:?}"
         );
         // Level 2 tiles under the two missing ones are never asked for.

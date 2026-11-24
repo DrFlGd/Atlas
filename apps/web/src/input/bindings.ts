@@ -138,7 +138,7 @@ export const BINDINGS: readonly Binding[] = [
     context: 'map',
     keys: ['Enter'],
     pad: ['a'],
-    what: 'Open the location under the crosshair. Again: move into its card',
+    what: 'Open the location under the crosshair. Again: move into its card. In Edit locations, with none under it: put a location there',
     hint: 'Open',
   },
   {

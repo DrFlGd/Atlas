@@ -132,6 +132,8 @@ export interface PadScene {
   lookAt(id: string): void;
   /** Looks straight down. */
   fromAbove(): void;
+  /** In Edit locations: a location at the point of the model under the crosshair (A). */
+  place?(): void;
 }
 
 let shownScene: PadScene | null = null;

@@ -13,6 +13,14 @@ import { deviceSignals } from './device';
 import { SceneEngine, type SceneDot, type SceneStatus } from './engine';
 import { floorBands } from './floorColours';
 import { headCut } from './goTo';
+import {
+  dropOnSurface,
+  editingNow,
+  editingPick,
+  placeOnSurface,
+  useSceneEditing,
+  type SceneWhere,
+} from './sceneEditing';
 import { SceneTitles } from './SceneTitles';
 import { areaTitles, type AreaTitle } from './titles';
 
@@ -108,6 +116,8 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
     const frame = sceneFrame(map.worldTransform, scene);
     if (!frame) return;
     let view: SceneEngine;
+    // Edit locations: where a point of the model is on the map.
+    const where: SceneWhere = { frame, map, pack };
     try {
       view = new SceneEngine({
         container,
@@ -119,11 +129,18 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
         dark: useAtlas.getState().theme === 'dark',
         events: {
           pick: (id) => {
+            if (editingPick(id)) return;
             select(id);
             touchRef.current?.onPick(id);
           },
           longPress: (id) => {
-            if (fingers) touchRef.current?.onLongPress(id);
+            if (fingers && !editingNow()) touchRef.current?.onLongPress(id);
+          },
+          place: (point) => {
+            placeOnSurface(point, where);
+          },
+          drop: (id, point) => {
+            dropOnSurface(id, point, where);
           },
           menu: (id) => {
             if (!fingers) touchRef.current?.onMarkerMenu?.(id);
@@ -173,6 +190,9 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
       },
       fromAbove: () => {
         view.fromAbove();
+      },
+      place: () => {
+        placeOnSurface(view.surfaceAtCentre(), where);
       },
     });
     setEngine(view);
@@ -231,6 +251,8 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
   useEffect(() => {
     engine?.setSelected(selectedId);
   }, [engine, selectedId]);
+
+  useSceneEditing(engine, mapId);
 
   // The cuts: above the location gone to, the floor's top, or the free cut; and toward the camera.
   const cut = useScene3d((s) => s.cut);
@@ -342,7 +364,8 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
       else if (area) showWhole(engine, area);
       return;
     }
-    if (here && selectedId !== before.selected) {
+    // In Edit locations, a location opened (or just put down) stays where it is in the view.
+    if (here && selectedId !== before.selected && !editingNow()) {
       goToLocation3d(engine, here, floors, container);
       return;
     }

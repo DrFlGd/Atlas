@@ -1553,6 +1553,30 @@
   box-shadow: 0 0 0 1px var(--atlas-border-strong);
 }
 
+/* Take locations from another pack: what is left out, by name. */
+.take-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.take-group .own-label {
+  margin: 0;
+}
+
+.take-names {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.take-more {
+  color: var(--atlas-muted);
+  list-style: none;
+  margin-left: -20px;
+}
+
 /* ---------------------------------------------------------------------------
  * Maps made in the app: New map from a picture, Add map and Add level (a name and a
  * picture, then how far the cut is), Rename and Delete map on the Games

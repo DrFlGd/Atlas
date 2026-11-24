@@ -197,6 +197,23 @@ describe('names of maps and levels in the own locations file', () => {
     ).not.toHaveProperty('names');
   });
 
+  it('keeps the height of a location put on a 3D map, and reads past one it cannot', () => {
+    const mine = own();
+    mine.locations[0] = { ...mine.locations[0]!, height: 12.5 };
+    const text = writeOwnLocationsFile('demo', mine, NOW);
+    // A height alone keeps the file's version: an older app reads it, without the height.
+    expect(JSON.parse(text)).toMatchObject({ version: 1 });
+    const read = readOwnLocationsFile(JSON.parse(text));
+    expect(read.ok && read.file.own.locations[0]!.height).toBe(12.5);
+    const file = JSON.parse(text) as { locations: Record<string, unknown>[] };
+    file.locations[0]!.height = 'high';
+    const tolerant = readOwnLocationsFile(file);
+    expect(tolerant.ok && tolerant.file.own.locations[0]!.height).toBeUndefined();
+    expect(tolerant.ok && tolerant.file.skipped).toBe(0);
+    mine.locations[0] = { ...mine.locations[0], height: Number.NaN };
+    expect(() => writeOwnLocationsFile('demo', mine, NOW)).toThrow();
+  });
+
   it('leaves out a name that is not of a map or a level of the game, and reads the others', () => {
     const value = JSON.parse(writeOwnLocationsFile('demo', named(), NOW)) as {
       names: unknown[];

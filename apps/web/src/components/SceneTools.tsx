@@ -21,7 +21,7 @@ export function SceneSwitch() {
   const mode = useScene3d((s) => s.mode);
   const webgl = useScene3d((s) => s.webgl);
   const shown = useSceneShown();
-  // Edit locations, the list editor and a route being changed work in 2D.
+  // The list editor and a route being changed work in 2D.
   const editing = mode === '3d' && webgl !== 'no' && !shown;
   return (
     <div
@@ -42,7 +42,7 @@ export function SceneSwitch() {
             value === '2d'
               ? 'Show the map in 2D'
               : editing
-                ? 'Shown in 2D while locations are changed'
+                ? 'Shown in 2D while a list or a route is changed'
                 : 'Show the map in 3D'
           }
           onClick={() => {

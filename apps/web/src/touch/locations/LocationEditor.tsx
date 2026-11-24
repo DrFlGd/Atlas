@@ -3,6 +3,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { GlyphBadge, UiIcon } from '../../components/icons';
 import { goToLocation } from '../../state/actions';
 import { numberFormat } from '../../state/derived';
+import { useSceneShown } from '../../state/scene3d';
 import { guidesOf } from '../../state/guides';
 import { cancelEntry, useMapEntries } from '../../state/mapEntries';
 import {
@@ -36,6 +37,7 @@ import {
   useLocationEditor,
   type NewLocationDraft,
 } from './locationEditorState';
+import { TakeLocationsPanel } from './TakeLocations';
 
 /*
  * Edit locations, in the standard layout (see `locationEditorState.ts`): the
@@ -89,11 +91,13 @@ export function LocationMapHint() {
   );
   const entry = useMapEntries((s) => s.pending);
   const drafting = useLocationEditor((s) => s.side?.kind === 'new-location');
+  // In 3D, the model is pressed: the location goes on its surface there.
+  const what = useSceneShown() ? 'the model' : 'the map';
   if (entry && !moving) {
     // An entry of a wiki page waiting for its place; once pressed, its form asks the rest.
     const text = drafting
-      ? 'Press the map to put it somewhere else'
-      : `Press the map where “${entry.name}” is`;
+      ? `Press ${what} to put it somewhere else`
+      : `Press ${what} where “${entry.name}” is`;
     return (
       <div
         className="touch-pill editor-map-hint"
@@ -117,7 +121,7 @@ export function LocationMapHint() {
       <span className="editor-map-hint-text">
         {moving
           ? `Press where “${name ?? 'the location'}” goes`
-          : 'Press the map to put a location there'}
+          : `Press ${what} to put a location there`}
       </span>
       {moving ? (
         <button
@@ -187,6 +191,7 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
   }, [own.locations]);
   const total = own.locations.length;
   const openId = side && 'id' in side ? side.id : null;
+  const in3d = useSceneShown();
 
   return (
     <div className="editor-outline locations-outline" data-testid="location-editor">
@@ -256,7 +261,9 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
       </div>
       <div className="locations-scroll" aria-labelledby={titleId} role="region">
         <p className="locations-lead">
-          Press the map to put a location there. Press one of yours to change, move or delete it.
+          {in3d
+            ? 'Press the model to put a location there, at the height of the surface you pressed. Press one of yours to change, move or delete it, or drag it.'
+            : 'Press the map to put a location there. Press one of yours to change, move or delete it.'}{' '}
           The game’s own locations stay as they are.
         </p>
         <section className="locations-section" aria-labelledby={`${titleId}-locations`}>
@@ -277,6 +284,24 @@ export function LocationEditorOutline({ game }: { game: LoadedGame }) {
               ))}
             </ul>
           )}
+          <button
+            type="button"
+            className="own-pill-button locations-new"
+            data-testid="take-locations"
+            aria-pressed={side?.kind === 'take'}
+            disabled={!map?.worldTransform}
+            title={
+              map?.worldTransform
+                ? 'Put the locations of another pack of this game on this map'
+                : 'This map has no world position, so no other map can be lined up with it'
+            }
+            onClick={() => {
+              openSide({ kind: 'take' });
+            }}
+          >
+            <UiIcon name="download" size={18} strokeWidth={1.8} />
+            Take locations from another pack…
+          </button>
         </section>
         <section className="locations-section" aria-labelledby={`${titleId}-types`}>
           <h2 id={`${titleId}-types`} className="locations-heading">
@@ -442,6 +467,8 @@ export function LocationEditorSide({ game }: { game: LoadedGame }) {
       return (
         <AreaPanel key={side.id ?? 'new'} game={game} id={side.id} forLocation={side.forLocation} />
       );
+    case 'take':
+      return <TakeLocationsPanel game={game} />;
   }
 }
 
@@ -516,6 +543,7 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
   const nameRef = useRef<HTMLInputElement>(null);
   const id = useId();
   const moving = useLocationEditor((s) => s.moving === location.id);
+  const in3d = useSceneShown();
   const groups = useMemo(() => typeGroups(game), [game]);
   const areas = useMemo(() => areasOf(game, location.mapId), [game, location.mapId]);
   const type = game.pack.categories.get(location.categoryId);
@@ -695,10 +723,14 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
           <span className="own-label">Where it is</span>
           <p className="editor-side-line" data-testid="location-position">
             {Math.round(location.x)}, {Math.round(location.y)}
+            {heightText(location.height)}
             {game.pack.layersOf(location.mapId).length > 1
               ? ` on ${game.pack.layers.get(location.layerId)?.name ?? 'its level'}`
               : ''}
-            . Drag the ring on the map, or give it the focus and use the arrow keys.
+            .{' '}
+            {in3d
+              ? 'Drag its dot over the model: its height follows the surface.'
+              : 'Drag the ring on the map, or give it the focus and use the arrow keys.'}
           </p>
           <button
             type="button"
@@ -710,7 +742,13 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
             }}
           >
             <UiIcon name="pin" size={18} strokeWidth={1.8} />
-            {moving ? 'Press the map, or press here to cancel' : 'Move to a point on the map'}
+            {moving
+              ? in3d
+                ? 'Press the model, or here to cancel'
+                : 'Press the map, or press here to cancel'
+              : in3d
+                ? 'Move to a point of the model'
+                : 'Move to a point on the map'}
           </button>
         </div>
       </div>
@@ -731,6 +769,13 @@ function LocationForm({ game, location }: { game: LoadedGame; location: OwnLocat
     </aside>
   );
 }
+
+/** A location's height, after its x and y, where it has one. */
+function heightText(height: number | undefined): string {
+  return height === undefined ? '' : `, ${HEIGHT_FORMAT.format(height)} high`;
+}
+
+const HEIGHT_FORMAT = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 });
 
 function focusOutline() {
   window.setTimeout(() => {
@@ -865,10 +910,12 @@ function NewLocationForm({ game, draft }: { game: LoadedGame; draft: NewLocation
             <span className="own-label">Where it is</span>
             <p className="editor-side-line" data-testid="location-position">
               {draft.x}, {draft.y}
+              {heightText(draft.height)}
               {game.pack.layersOf(draft.mapId).length > 1
                 ? ` on ${game.pack.layers.get(draft.layerId)?.name ?? 'its level'}`
                 : ''}
-              . Press the map to put it somewhere else.
+              . Press {draft.height !== undefined ? 'the model' : 'the map'} to put it somewhere
+              else.
             </p>
           </div>
           {entry ? (

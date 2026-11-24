@@ -31,7 +31,9 @@ import { MAX_OWN_PICTURES, ownPictureFile } from './ownPictures';
  * as well as of its own.
  *
  * A location may have photos (`photos`), the person's own pictures kept in
- * the file's `pictures` (see `ownPictures.ts`).
+ * the file's `pictures` (see `ownPictures.ts`), and a height (`height`), as
+ * a pack's location may: where it was put on a 3D map. The height is
+ * optional and read tolerantly, so the file keeps its version.
  *
  * The person's own names of the game's maps and levels (`names`): each with
  * the id of the map or level (a layer), the name the person gave, and the
@@ -99,6 +101,15 @@ function ownLocationSchemas(mode: SchemaMode) {
     note: reading
       ? z.string().max(MAX_OWN_NOTE_LENGTH).optional().catch(undefined)
       : z.string().max(MAX_OWN_NOTE_LENGTH).optional(),
+    /**
+     * Its height in the game's world, in the units of its map's
+     * `worldTransform`, as a pack's location has it (see `scene.ts`): put
+     * on a 3D map, it is the height of the surface pressed. Absent: it
+     * sits on the model's surface below it. An app before heights leaves
+     * it out when it reads the file, and the location then sits on the
+     * surface.
+     */
+    height: reading ? z.number().optional().catch(undefined) : z.number().optional(),
     /** Photos of the location: the person's own pictures (in `pictures`) or the pack's. */
     photos: reading
       ? z.array(packReadSchemas.photoSchema).optional().catch(undefined)

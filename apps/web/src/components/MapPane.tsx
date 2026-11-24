@@ -142,7 +142,10 @@ export function MapPane({ touch }: { touch?: TouchMapOptions } = {}) {
       }),
       view.onHandleMove((point) => {
         const { side } = useLocationEditor.getState();
-        if (side?.kind === 'location') changeOwn(side.id, point, 'Location moved');
+        // Moved on the 2D map, it sits on the surface below it: no height.
+        if (side?.kind === 'location') {
+          changeOwn(side.id, { ...point, height: undefined }, 'Location moved');
+        }
       }),
     ];
     setMap(view);
