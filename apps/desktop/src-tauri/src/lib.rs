@@ -276,6 +276,8 @@ fn invoke_handler<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool
         gamefolders::commands::import_folder_list,
         gamefolders::commands::import_folder_read,
         gamefolders::commands::import_folder_close,
+        gamefolders::commands::import_files_open,
+        gamefolders::commands::import_files_download,
         gamefolders::commands::import_keep_model,
         commands::library_style_texts,
         commands::download_settings_get,

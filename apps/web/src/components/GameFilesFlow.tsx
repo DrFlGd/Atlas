@@ -6,7 +6,9 @@ import {
   closeGameFiles,
   gameFilesChoices,
   openGameFilesGame,
+  downloadGameFiles,
   pickGameFolder,
+  setOwnGame,
   setPersonalUse,
   startGameFiles,
   stopGameBuild,
@@ -26,11 +28,14 @@ import { UiIcon } from './icons';
 /** The button that starts the steps, when an importer of this app reads a game's files. */
 export function GameFilesButton() {
   const [offered, setOffered] = useState(false);
+  const [downloads, setDownloads] = useState(false);
   useEffect(() => {
     let live = true;
     gameFilesChoices().then(
       (choices) => {
-        if (live) setOffered(choices.length > 0);
+        if (!live) return;
+        setOffered(choices.length > 0);
+        setDownloads(choices.some((choice) => choice.kind.download));
       },
       () => undefined,
     );
@@ -54,8 +59,9 @@ export function GameFilesButton() {
         <span>
           Make a 3D map from game files
           <span className="library-button-note">
-            From a game you own, installed on this computer: its levels become 3D maps with their
-            textures. Nothing is downloaded or sent anywhere.
+            {downloads
+              ? 'From a game you own, from its files on this computer or downloaded once you confirm you own it: its levels become 3D maps with their textures. Nothing is sent anywhere.'
+              : 'From a game you own, installed on this computer: its levels become 3D maps with their textures. Nothing is downloaded or sent anywhere.'}
           </span>
         </span>
       </button>
@@ -131,15 +137,16 @@ function ChooseKind({ step }: { step: Extract<GameFilesStep, { kind: 'choose' }>
 }
 
 function ChooseFolder({ step }: { step: Extract<GameFilesStep, { kind: 'folder' }> }) {
+  const download = step.choice.kind.download;
   return (
     <>
       <p>
         <strong>{step.choice.kind.title}.</strong> {step.choice.kind.description}
       </p>
       <p className="muted small">
-        Choose the folder the game is installed in. This app only reads it: nothing in it is
-        changed, and nothing is sent anywhere. Choosing your own installed game is how you say you
-        own it.
+        {download
+          ? 'Choose the folder that holds the game’s files. This app only reads it: nothing in it is changed, and nothing is sent anywhere.'
+          : 'Choose the folder the game is installed in. This app only reads it: nothing in it is changed, and nothing is sent anywhere. Choosing your own installed game is how you say you own it.'}
       </p>
       {step.error ? (
         <p className="download-error" role="alert" data-testid="game-files-error">
@@ -160,6 +167,40 @@ function ChooseFolder({ step }: { step: Extract<GameFilesStep, { kind: 'folder' 
           Cancel
         </button>
       </div>
+      {download ? (
+        <div className="download-confirm" data-testid="game-files-download">
+          <p>
+            <strong>Or download the game’s files.</strong> {download.description} Nothing is
+            downloaded until you make maps, and only for a game you own.
+          </p>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              data-testid="game-files-owned"
+              checked={step.owned ?? false}
+              disabled={step.reading}
+              onChange={(event) => {
+                setOwnGame(event.target.checked);
+              }}
+            />
+            <span>I own this game.</span>
+          </label>
+          <div className="row-actions">
+            <button
+              type="button"
+              className="button"
+              data-testid="game-files-download-start"
+              disabled={step.reading || !step.owned}
+              onClick={() => void downloadGameFiles()}
+            >
+              Download the files instead
+            </button>
+          </div>
+          {!step.owned ? (
+            <p className="muted small">Tick “I own this game.” first, then press the button.</p>
+          ) : null}
+        </div>
+      ) : null}
     </>
   );
 }
@@ -172,9 +213,12 @@ function ChooseMaps({ step }: { step: Extract<GameFilesStep, { kind: 'maps' }> }
   return (
     <>
       <p>
-        <strong>{survey.game.title}</strong>, in {step.folder.name}:{' '}
-        {numberFormat.format(survey.maps.length)} {survey.maps.length === 1 ? 'map' : 'maps'}. Tick
-        the maps to make; each becomes a 3D map of the game, with a picture drawn from above.
+        <strong>{survey.game.title}</strong>
+        {step.folder.downloads
+          ? ', its files downloaded as needed'
+          : `, in ${step.folder.name}`}: {numberFormat.format(survey.maps.length)}{' '}
+        {survey.maps.length === 1 ? 'map' : 'maps'}. Tick the maps to make; each becomes a 3D map of
+        the game, with a picture drawn from above.
       </p>
       {(survey.notes ?? []).map((note) => (
         <p key={note} className="download-note small">

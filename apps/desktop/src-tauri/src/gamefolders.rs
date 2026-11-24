@@ -14,10 +14,22 @@
 //! followed through a link: a link inside the folder is not listed, and a
 //! path through one is refused, so nothing outside the folder is read.
 //!
+//! An importer that can download its game's files instead (a kind of game
+//! with `download` in the importer contract) gets a folder of the app's own
+//! in place of one picked: `<maps folder>/.importing-game-files/<importer>/<kind>`
+//! ([`GameFolders::open_kept`]), opened only once the person has confirmed
+//! in the web app that they own the game. In that folder, and only there,
+//! the web app may also download a file ([`GameFolders::download`]): one
+//! `https` request at a time, made by the app as the app (`Atlas/<version>`,
+//! no cookies, no referrer, redirects only on the same site, as
+//! `pagefetch.rs` reads pages), at most [`MAX_DOWNLOAD_BYTES`]; any answer
+//! but the file is an error and nothing is tried again. The file is kept at
+//! the path named, so the importer reads it from there the next time.
+//!
 //! In a build with downloads only (the app with importers).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{Read as _, Seek as _, SeekFrom, Write as _},
     path::{Component, Path, PathBuf},
@@ -25,7 +37,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Mutex, PoisonError,
     },
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::Serialize;
@@ -36,6 +48,14 @@ pub const MAX_READ_BYTES: u64 = 512 << 20;
 pub const MAX_ENTRIES: usize = 20_000;
 /// The most bytes one part of a model may have.
 pub const MAX_MODEL_PART_BYTES: usize = 64 << 20;
+/// The most bytes one download fetches (the importer contract's
+/// `GAME_FILE_MAX_DOWNLOAD`).
+pub const MAX_DOWNLOAD_BYTES: u64 = 256 << 20;
+/// The hidden folder of the maps folder that keeps the files importers
+/// downloaded, a folder for each importer and kind of game.
+pub const KEPT_FILES_DIR: &str = ".importing-game-files";
+/// How long one download may take, all of it.
+const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// One entry of a folder, as the web app reads it.
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -62,6 +82,23 @@ pub struct PickedFolder {
 #[derive(Default)]
 pub struct GameFolders {
     folders: Mutex<HashMap<String, PathBuf>>,
+    /// The tokens of the app's own folders, kept for downloads.
+    kept: Mutex<HashSet<String>>,
+    /// Held through each download, so there is one at a time.
+    downloading: tokio::sync::Mutex<()>,
+}
+
+/// Whether `id` is an importer's or a kind's id as the importer contract
+/// writes them: lowercase letters, digits, `-` and `_`, from a letter or digit.
+fn is_id(id: &str) -> bool {
+    (1..=64).contains(&id.len())
+        && id
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
 }
 
 fn new_token() -> String {
@@ -92,12 +129,79 @@ impl GameFolders {
         Ok(PickedFolder { token, name })
     }
 
+    /// Opens the app's own folder for the files an importer downloads for
+    /// a kind of game, made when it is not there yet.
+    pub fn open_kept(
+        &self,
+        maps: &Path,
+        importer: &str,
+        kind: &str,
+    ) -> Result<PickedFolder, String> {
+        if !is_id(importer) || !is_id(kind) {
+            return Err("That is not a kind of game an importer reads.".to_owned());
+        }
+        let dir = maps.join(KEPT_FILES_DIR).join(importer).join(kind);
+        fs::create_dir_all(&dir)
+            .map_err(|error| format!("Could not write to the maps folder: {error}"))?;
+        let picked = self.add(&dir)?;
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(picked.token.clone());
+        Ok(picked)
+    }
+
     /// Forgets a folder.
     pub fn forget(&self, token: &str) {
         self.folders
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(token);
+        self.kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(token);
+    }
+
+    /// Downloads the file at `url` into the app's own folder `token`, at
+    /// `path`, and hands its bytes back: one download at a time, and only
+    /// into a folder [`open_kept`](Self::open_kept) opened.
+    pub async fn download(&self, token: &str, url: &str, path: &str) -> Result<Vec<u8>, String> {
+        self.download_at_most(token, url, path, MAX_DOWNLOAD_BYTES)
+            .await
+    }
+
+    async fn download_at_most(
+        &self,
+        token: &str,
+        url: &str,
+        path: &str,
+        max: u64,
+    ) -> Result<Vec<u8>, String> {
+        let kept = self
+            .kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(token);
+        if !kept {
+            return Err(
+                "This app downloads only into its own folder for a game's files.".to_owned(),
+            );
+        }
+        let root = self.root(token)?;
+        if path.is_empty() {
+            return Err("No file was named to keep the download in.".to_owned());
+        }
+        inside(&root, path)?;
+        let _turn = self.downloading.lock().await;
+        let bytes = fetch_file(url, max).await?;
+        let keep_root = root.clone();
+        let keep_path = path.to_owned();
+        let kept_bytes = bytes.clone();
+        tokio::task::spawn_blocking(move || keep_file(&keep_root, &keep_path, &kept_bytes))
+            .await
+            .map_err(|_| "The downloaded file could not be kept.".to_owned())??;
+        Ok(bytes)
     }
 
     fn root(&self, token: &str) -> Result<PathBuf, String> {
@@ -170,6 +274,61 @@ impl GameFolders {
             .map_err(|_| format!("The file {} could not be read to its end.", shown(path)))?;
         Ok(bytes)
     }
+}
+
+/// The file at `address`, fetched as the app (see `pagefetch::request`):
+/// its bytes when the answer is the file (200), else why not; never more
+/// than `max` bytes.
+async fn fetch_file(address: &str, max: u64) -> Result<Vec<u8>, String> {
+    let (_, mut response) = crate::pagefetch::request(address, "*/*", DOWNLOAD_TIMEOUT).await?;
+    let status = response.status();
+    if status.as_u16() != 200 {
+        let reason = status
+            .canonical_reason()
+            .map_or_else(String::new, |reason| format!(" ({reason})"));
+        return Err(format!(
+            "The server answered {}{reason}, so the file was not downloaded.",
+            status.as_u16()
+        ));
+    }
+    let too_large = || "The file is larger than this app downloads.".to_owned();
+    if response.content_length().is_some_and(|length| length > max) {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "The download was cut off.".to_owned())?
+    {
+        if (body.len() + chunk.len()) as u64 > max {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+/// Keeps a downloaded file at `path` inside `root`: written beside it
+/// first, then put in its place, so a file cut short is never kept.
+fn keep_file(root: &Path, path: &str, bytes: &[u8]) -> Result<(), String> {
+    let target = inside(root, path)?;
+    let could_not =
+        |error: std::io::Error| format!("The downloaded file could not be kept: {error}");
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(could_not)?;
+    }
+    // Made since the check: checked again, so nothing is written through a link.
+    let target = inside(root, path)?;
+    let mut partial = target.clone().into_os_string();
+    partial.push(".part");
+    let partial = PathBuf::from(partial);
+    let written = fs::write(&partial, bytes).and_then(|()| fs::rename(&partial, &target));
+    if let Err(error) = written {
+        let _ = fs::remove_file(&partial);
+        return Err(could_not(error));
+    }
+    Ok(())
 }
 
 fn shown(path: &str) -> String {
@@ -342,6 +501,42 @@ pub mod commands {
         .await
     }
 
+    /// Opens the app's own folder for the files `importer` downloads for
+    /// its kind of game `kind` (the web app asks only once the person has
+    /// confirmed they own the game).
+    #[tauri::command]
+    pub async fn import_files_open<R: Runtime>(
+        window: WebviewWindow<R>,
+        folders: Folders<'_>,
+        library: State<'_, Arc<Library>>,
+        importer: String,
+        kind: String,
+    ) -> Result<PickedFolder, String> {
+        main_only(&window)?;
+        let folders = Arc::clone(&folders);
+        let maps = library.maps_folder();
+        blocking(move || folders.open_kept(&maps, &importer, &kind)).await
+    }
+
+    /// Downloads a file into the app's own folder for a game's files, keeps
+    /// it at `path` there, and answers its bytes.
+    #[tauri::command]
+    pub async fn import_files_download<R: Runtime>(
+        window: WebviewWindow<R>,
+        folders: Folders<'_>,
+        token: String,
+        url: String,
+        path: String,
+    ) -> Result<Response, String> {
+        main_only(&window)?;
+        let folders = Arc::clone(&folders);
+        crate::keep::reading();
+        folders
+            .download(&token, &url, &path)
+            .await
+            .map(Response::new)
+    }
+
     /// Forgets a picked game folder.
     #[tauri::command]
     pub async fn import_folder_close<R: Runtime>(
@@ -446,6 +641,160 @@ mod tests {
             .is_err());
         folders.forget(&picked.token);
         assert!(folders.list(&picked.token, "").is_err());
+    }
+
+    #[tokio::test]
+    async fn downloads_into_its_own_folder_only_one_file_as_the_app() {
+        use crate::tiles::download::tests::{MockServer, Reply};
+        use std::sync::Arc;
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let server = MockServer::start(Arc::new(|path, _| match path {
+            "/Game/01_arc.crg1?cache_bust=3" => Reply {
+                body: b"made up archive".to_vec(),
+                ..Reply::status(200)
+            }
+            .header("Set-Cookie", "session=1"),
+            "/Game/large.bin" => Reply {
+                body: vec![7; 64],
+                ..Reply::status(200)
+            },
+            "/away" => Reply::status(302).header("Location", "https://elsewhere.invalid/x"),
+            _ => Reply::status(404),
+        }))
+        .await;
+        let dir = TempDir::new("game-files-kept");
+        let folders = GameFolders::default();
+        for (importer, kind) in [
+            ("", "x"),
+            ("gamefiles", "../up"),
+            ("Game", "x"),
+            ("a", "b/c"),
+        ] {
+            assert!(
+                folders.open_kept(&dir.0, importer, kind).is_err(),
+                "{importer} {kind}"
+            );
+        }
+        let kept = folders
+            .open_kept(&dir.0, "gamefiles", "made-up-game")
+            .unwrap();
+        assert_eq!(kept.name, "made-up-game");
+        assert!(dir
+            .0
+            .join(KEPT_FILES_DIR)
+            .join("gamefiles")
+            .join("made-up-game")
+            .is_dir());
+
+        let bytes = folders
+            .download(
+                &kept.token,
+                &server.url("/Game/01_arc.crg1?cache_bust=3"),
+                "Game/01_arc.crg1",
+            )
+            .await
+            .unwrap();
+        assert_eq!(bytes, b"made up archive");
+        assert_eq!(
+            folders
+                .read(&kept.token, "Game/01_arc.crg1", 0, 100)
+                .unwrap(),
+            b"made up archive"
+        );
+        assert_eq!(
+            folders.list(&kept.token, "Game").unwrap(),
+            vec![FolderEntry {
+                name: "01_arc.crg1".into(),
+                folder: false,
+                size: 15
+            }]
+        );
+        // Asked again, it is downloaded again: the importer reads what is kept first.
+        folders
+            .download(
+                &kept.token,
+                &server.url("/Game/01_arc.crg1?cache_bust=3"),
+                "Game/01_arc.crg1",
+            )
+            .await
+            .unwrap();
+
+        // Anything but the file is an error, and nothing is kept.
+        let missing = folders
+            .download(
+                &kept.token,
+                &server.url("/Game/02_arc.crg1"),
+                "Game/02_arc.crg1",
+            )
+            .await
+            .unwrap_err();
+        assert!(missing.contains("404 (Not Found)"), "{missing}");
+        let away = folders
+            .download(&kept.token, &server.url("/away"), "Game/away")
+            .await
+            .unwrap_err();
+        assert!(away.contains("302"), "{away}");
+        let large = folders
+            .download_at_most(
+                &kept.token,
+                &server.url("/Game/large.bin"),
+                "Game/large.bin",
+                10,
+            )
+            .await
+            .unwrap_err();
+        assert!(large.contains("larger"), "{large}");
+        assert_eq!(folders.list(&kept.token, "Game").unwrap().len(), 1);
+
+        // Never outside the folder, never over plain http elsewhere, never into a folder picked.
+        for path in ["", "../x", "Game/../../x", "/x", "C:/x"] {
+            assert!(
+                folders
+                    .download(
+                        &kept.token,
+                        &server.url("/Game/01_arc.crg1?cache_bust=3"),
+                        path
+                    )
+                    .await
+                    .is_err(),
+                "{path}"
+            );
+        }
+        assert!(folders
+            .download(&kept.token, "http://example.org/x", "x")
+            .await
+            .is_err());
+        let picked = folders.add(&dir.0).unwrap();
+        assert!(folders
+            .download(
+                &picked.token,
+                &server.url("/Game/01_arc.crg1?cache_bust=3"),
+                "x"
+            )
+            .await
+            .is_err());
+        folders.forget(&kept.token);
+        assert!(folders
+            .download(
+                &kept.token,
+                &server.url("/Game/01_arc.crg1?cache_bust=3"),
+                "x"
+            )
+            .await
+            .is_err());
+
+        // Each request as the app: no cookie carried, no referrer, no browser's headers.
+        let seen = server.seen();
+        assert_eq!(seen.len(), 5);
+        for seen in seen {
+            assert_eq!(
+                seen.headers["user-agent"],
+                crate::tiles::download::USER_AGENT
+            );
+            for absent in ["cookie", "referer", "origin", "sec-fetch-mode"] {
+                assert!(!seen.headers.contains_key(absent), "{absent} was sent");
+            }
+        }
     }
 
     #[test]

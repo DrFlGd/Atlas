@@ -36,6 +36,30 @@ describe('game files', () => {
     expect(() => asImporter({ ...demo, gameFiles: { ...gameFiles, kinds: [] } })).toThrow();
   });
 
+  it('keeps a kind’s offer to download its files, and refuses one without a description', () => {
+    const { pageReader: _reader, fetch: _fetch, ...rest } = demo;
+    const download = { description: 'Downloads only the files the maps you tick need.' };
+    const importer = asImporter({
+      ...rest,
+      matches: () => false,
+      gameFiles: { ...gameFiles, kinds: [{ ...gameFiles.kinds[0]!, download }] },
+    });
+    expect(importer.gameFiles?.kinds[0]?.download).toEqual(download);
+    expect(
+      asImporter({ ...rest, matches: () => false, gameFiles }).gameFiles?.kinds[0]?.download,
+    ).toBeUndefined();
+    expect(() =>
+      asImporter({
+        ...rest,
+        matches: () => false,
+        gameFiles: {
+          ...gameFiles,
+          kinds: [{ ...gameFiles.kinds[0]!, download: { description: ' ' } }],
+        },
+      }),
+    ).toThrow(/not an Atlas importer/);
+  });
+
   it('builds a model made on this computer, with its textures kept when asked', () => {
     const model = glb();
     expect(checkSceneModelRequest({ folder: 'level-1', model, textures: 'keep' })).toEqual({
