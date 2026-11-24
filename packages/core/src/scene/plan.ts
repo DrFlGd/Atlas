@@ -189,7 +189,7 @@ export const UNKNOWN_TRIANGLES = 50_000;
  * follows its distance from the camera in cell sides `r`: the finest
  * within 1.5, the next to 4.5, the next to 10.5 (`floor(log2(1 + r /
  * 1.5))`), plus `bias` levels coarser when frames come slowly; past
- * `budget.reach` it is not shown. A scene of one cell (a model kept whole)
+ * `budget.reach` it is not shown (but for a scene of one cell). A scene of one cell (a model kept whole)
  * is not judged by distance: its level is the finest the bias and the
  * budget allow, so it is not loaded again coarser as the camera draws
  * back. While the triangles of the plan are over the budget, the farthest
@@ -218,7 +218,8 @@ export function planCells(
       const rank = near + Math.max(0, bias);
       return { cell, distance, index: Math.min(rank, cell.levels.length - 1) };
     })
-    .filter((entry) => entry.distance <= budget.reach)
+    // A scene of one cell is shown however far the camera is from it.
+    .filter((entry) => cells.length === 1 || entry.distance <= budget.reach)
     .sort((a, b) => a.distance - b.distance);
   const triangles = (entry: (typeof entries)[number]) =>
     entry.cell.levels[entry.index]!.triangles ?? UNKNOWN_TRIANGLES;
@@ -297,7 +298,8 @@ export function nextBias(state: FrameBias, frameMs: readonly number[]): FrameBia
   if (median < QUICK_FRAME_MS && state.bias > state.floor) {
     return { ...state, bias: state.bias - 1, retrying: true };
   }
-  return state;
+  // A level stepped back to that kept up is no longer on trial.
+  return state.retrying ? { ...state, retrying: false } : state;
 }
 
 /** The most frame times kept to judge the frame rate by. */

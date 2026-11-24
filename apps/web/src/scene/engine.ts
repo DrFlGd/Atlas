@@ -662,6 +662,8 @@ export class SceneEngine {
   private textureBias = 0;
   /** When the textures' bias may step again. */
   private textureStepDue = 0;
+  /** The textures' bias stepped and the cells it asked for are not all in yet. */
+  private textureStepped = false;
   /** Frames still to leave out of the frame rate after a cell was put in. */
   private settling = 0;
   private frameTimes: number[] = [];
@@ -1284,15 +1286,20 @@ export class SceneEngine {
 
   /**
    * Steps the textures' bias as their memory asks, at most once a bias
-   * period: the cells loading when it steps are counted only once they
-   * are in, so a second step before then would overshoot. Whether it stepped.
+   * period and not again until the cells loading after a step are all in:
+   * they are counted only once they are in, so a second step before then
+   * would overshoot. Whether it stepped.
    */
   private stepTextureBias(now: number): boolean {
-    if (now < this.textureStepDue) return false;
+    const loading = this.cells.some((state) => state.loading !== null);
+    // After a step, the next waits until the cells it asked for are all in.
+    if (this.textureStepped && !loading) this.textureStepped = false;
+    if (now < this.textureStepDue || this.textureStepped) return false;
     const next = nextTextureBias(this.textureBias, this.status().textureBytes, this.options.budget);
     if (next === this.textureBias) return false;
     this.textureBias = next;
     this.textureStepDue = now + BIAS_MS;
+    this.textureStepped = true;
     return true;
   }
 

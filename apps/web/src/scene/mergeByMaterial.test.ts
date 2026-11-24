@@ -64,6 +64,32 @@ describe('the meshes of a loaded cell', () => {
     expect(loaded.triangles).toBe(39 * 39 * 2);
   });
 
+  it('takes normals interleaved in one buffer, as the model files hold them', () => {
+    // Normals as bytes with a stride of 4, which the loader reads as an interleaved attribute.
+    const { root, count } = sharedCell(20, 4, (p) => p % 2);
+    const bytes = new Int8Array(count * 4);
+    for (let v = 0; v < count; v++) bytes[v * 4 + 1] = 127;
+    const interleaved = new THREE.InterleavedBufferAttribute(
+      new THREE.InterleavedBuffer(bytes, 4),
+      3,
+      0,
+      true,
+    );
+    root.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        (object.geometry as THREE.BufferGeometry).setAttribute('normal', interleaved);
+      }
+    });
+    const loaded = mergeByMaterial(root);
+    expect(loaded.meshes).toHaveLength(2);
+    expect(loaded.triangles).toBe(19 * 19 * 2);
+    for (const mesh of loaded.meshes) {
+      const normal = mesh.geometry.getAttribute('normal');
+      expect(normal.count).toBe(mesh.geometry.getAttribute('position').count);
+      for (let v = 0; v < normal.count; v++) expect(normal.getY(v)).toBeCloseTo(1, 2);
+    }
+  });
+
   it('merges the primitives of one material, each with only the vertices it uses', () => {
     // Two materials over four primitives: 0 and 2 share one, 1 and 3 the other.
     const { root, count } = sharedCell(20, 4, (p) => p % 2);

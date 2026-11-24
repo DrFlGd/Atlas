@@ -169,8 +169,8 @@ describe('which cells to load', () => {
       expect(planCells(whole, camera, huge, 1)[0]!.level).toBe(1);
       expect(planCells(whole, camera, { triangles: 5_000, reach: 8 })[0]!.level).toBe(1);
     }
-    // Past the reach it is not shown, as any cell.
-    expect(planCells(whole, [500, 0, 5], huge)).toEqual([]);
+    // However far the camera, the only cell is shown: the view is never empty.
+    expect(planCells(whole, [500, 0, 5], huge)[0]!.level).toBe(0);
   });
 });
 
@@ -217,12 +217,22 @@ describe('stepping the detail by frame rate', () => {
     expect(bias).toEqual({ bias: 2, floor: 1, retrying: false });
     bias = nextBias(nextBias(bias, quick), quick);
     expect(bias.bias).toBe(1);
-    // Frames between slow and quick after a step back keep the level, and a slow spell later gives it up.
+    // A level stepped back to that is slow at once is given up.
     expect(nextBias(at(2, 1), quick)).toEqual({ bias: 1, floor: 1, retrying: true });
     expect(nextBias({ bias: 1, floor: 1, retrying: true }, slow)).toEqual({
       bias: 2,
       floor: 2,
       retrying: false,
+    });
+    // One that kept up for a full sample is no longer on trial: a slow spell later steps
+    // coarser without giving it up.
+    const kept = nextBias({ bias: 1, floor: 1, retrying: true }, Array(30).fill(30));
+    expect(kept).toEqual({ bias: 1, floor: 1, retrying: false });
+    expect(nextBias(kept, slow)).toEqual({ bias: 2, floor: 1, retrying: false });
+    expect(nextBias({ bias: 1, floor: 0, retrying: true }, quick)).toEqual({
+      bias: 0,
+      floor: 0,
+      retrying: true,
     });
   });
 });
