@@ -95,7 +95,20 @@ class LayoutUnreadable(Exception):
     first (the reason that matters), then the first."""
 
     def __init__(self, strict: BaseException, relaxed: BaseException) -> None:
-        super().__init__(f"read with relaxed checks: {_short(relaxed)}; with Soulstruct's checks: {_short(strict)}")
+        super().__init__(
+            f"read with relaxed checks: {_short(relaxed)}{_where(relaxed)}; with Soulstruct's checks: {_short(strict)}"
+        )
+
+
+def _where(error: BaseException) -> str:
+    """Where an error was raised, as " (in <function> of <file>:<line>)", so a report shows the place to look."""
+    import traceback
+
+    frames = traceback.extract_tb(error.__traceback__)
+    if not frames:
+        return ""
+    last = frames[-1]
+    return f" (in {last.name} of {last.filename.replace(chr(92), '/').rsplit('/', 1)[-1]}:{last.lineno})"
 
 
 def lenient_note(relaxed: Counter[str]) -> str:
@@ -103,6 +116,7 @@ def lenient_note(relaxed: Counter[str]) -> str:
         (relaxed["padding"], "in bytes expected blank"),
         (relaxed["unused"], "data blocks expected absent"),
         (relaxed["dropped"], "with no field to hold them"),
+        (relaxed["unresolved"], "lists of references read into no field, left referring to nothing"),
     ]
     found = "; ".join(f"{count} {what}" for count, what in counts if count) or "none"
     note = f"read with relaxed checks, past values Atlas does not use: {found}"
@@ -143,6 +157,7 @@ def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
     original_validate = BinaryMetadata.__dict__.get("validate")
     original_kwargs = MSBEntry.__dict__.get("reader_to_entry_kwargs")
     original_unpack = MSB.__dict__.get("_unpack_entry")
+    original_consume = MSBEntry.__dict__.get("_consume_indices")
     if original_validate is None or not isinstance(original_kwargs, classmethod) or not isinstance(original_unpack, classmethod):
         yield
         return
@@ -172,7 +187,14 @@ def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
         accepted = _init_fields(cls)
         if accepted is not None:
             for name in [name for name in kwargs if name not in accepted]:
-                kwargs.pop(name)
+                value = kwargs.pop(name)
+                # Soulstruct names some lists of indices one way in the file's struct and another in the entry
+                # (Bloodborne platoons: `_platoon_character_indices` read, `_platoon_characters_indices` kept):
+                # the value goes to the entry's own name for it rather than being lost.
+                plural = name[: -len("_indices")] + "s_indices" if name.endswith("_indices") else None
+                if plural is not None and plural in accepted and plural not in kwargs:
+                    kwargs[plural] = value
+                    continue
                 relaxed["dropped"] += 1
         return kwargs
 
@@ -189,15 +211,26 @@ def lenient_layout_reading(relaxed: Counter[str]) -> tp.Iterator[None]:
                 relaxed[f"first error:{_short(error, 120)} (a {kind[:-1]} at byte {offset})"] = 1
             entry_lists[supertype].append(_LeftOut(supertype))
 
+    def consume_indices(self: tp.Any, entry_lists: tp.Any, list_name: str, field_name: str) -> None:
+        # A list of references read into no field refers to nothing, rather than turning down the whole layout.
+        if getattr(self, f"_{field_name}_indices", None) is None:
+            relaxed["unresolved"] += 1
+            object.__setattr__(self, f"_{field_name}_indices", [-1] * len(getattr(self, field_name, None) or []))
+        original_consume(self, entry_lists, list_name, field_name)
+
     BinaryMetadata.validate = validate
     MSBEntry.reader_to_entry_kwargs = classmethod(reader_to_entry_kwargs)
     MSB._unpack_entry = classmethod(unpack_entry)
+    if original_consume is not None:
+        MSBEntry._consume_indices = consume_indices
     try:
         yield
     finally:
         BinaryMetadata.validate = original_validate
         MSBEntry.reader_to_entry_kwargs = original_kwargs
         MSB._unpack_entry = original_unpack
+        if original_consume is not None:
+            MSBEntry._consume_indices = original_consume
 
 
 def _supertype_word(supertype: str) -> str:

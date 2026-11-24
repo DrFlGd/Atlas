@@ -108,6 +108,7 @@ def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
     Soulstruct expects blank: small values after the GParam and SceneGParam fields. Its entries after the first
     with an absent data block (the "other" event here) are turned down by Soulstruct's check of absent blocks, which
     measures their offset from the start of the file rather than from the entry."""
+    import soulstruct.bloodborne.maps.events as bb_events
     import soulstruct.bloodborne.maps.models as bb_models
     import soulstruct.bloodborne.maps.parts as bb_parts
     from soulstruct.bloodborne.maps import MSB as BloodborneMSB
@@ -128,8 +129,8 @@ def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
         name="o0510_0000", model=model("Object", "o0510"), translate=Vector3((-20.0, 0.5, 15.0)), entity_id=base + 1960, **part
     )
     character = model("Character", "c2800")
-    msb.characters.new(name="c2800_0000", model=character, translate=Vector3((30.0, 2.0, 25.0)), **part)
-    msb.characters.new(name="c2800_0001", model=character, translate=Vector3((-35.0, 4.0, -30.0)), **part)
+    first = msb.characters.new(name="c2800_0000", model=character, translate=Vector3((30.0, 2.0, 25.0)), **part)
+    second = msb.characters.new(name="c2800_0001", model=character, translate=Vector3((-35.0, 4.0, -30.0)), **part)
     msb.player_starts.new(name="c0000_0000", model=model("Player", "c0000"), translate=Vector3((0.0, 0.0, 40.0)), **part)
     msb.treasures.new(name="Treasure chest", treasure_part=chest, item_lot_1=ITEM_LOTS[0], item_lot_2=ITEM_LOTS[1])
     msb.treasures.new(name="Treasure corpse", treasure_part=lamp, item_lot_1=ITEM_LOTS[2], item_lot_2=9999999)
@@ -152,6 +153,9 @@ def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
     )
     msb.navmeshes.new(name=navmesh, model=model("Navmesh", navmesh, stem), **part)
     msb.other_events.new(name="Other event")
+    # A platoon, as real files have: Soulstruct 2.6 names its indices one way in the file's struct and another in
+    # the event (`_platoon_character_indices` and `_platoon_characters_indices`), so it reads them into no field.
+    msb.platoons.new(name="Platoon", platoon_characters=[first, second] + [None] * 28)
 
     msb.dcx_type = DCXType.Null  # plain bytes here; write_dcx compresses them
     header = bb_parts.PartHeaderStruct
@@ -162,10 +166,23 @@ def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
         kwargs["instance_index"] = 0  # left unfilled by Soulstruct's writer
 
     header.preprocess_write_kwargs = classmethod(preprocess_write_kwargs)
+    platoon = bb_events.PlatoonEventDataStruct
+    platoon_original = platoon.__dict__.get("preprocess_write_kwargs")
+
+    def write_platoon(cls, entry, entry_lists, kwargs) -> None:
+        # Soulstruct's own writer looks for the event's fields by the struct's names, which the event lacks.
+        kwargs["_platoon_character_indices"] = entry.try_index(entry_lists["characters"], "platoon_characters")
+        kwargs["_platoon_parent_indices"] = entry.try_index(entry_lists["PARTS_PARAM_ST"], "platoon_parents")
+
+    platoon.preprocess_write_kwargs = classmethod(write_platoon)
     try:
         data = bytearray(msb.to_bytes())
     finally:
         header.preprocess_write_kwargs = original
+        if platoon_original is None:
+            del platoon.preprocess_write_kwargs
+        else:
+            platoon.preprocess_write_kwargs = platoon_original
 
     def after(mark: bytes) -> int:
         assert data.count(mark) == 1, (mark, data.count(mark))

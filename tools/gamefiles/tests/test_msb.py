@@ -44,6 +44,10 @@ def test_relaxed_reading_reads_every_part(layout: bytes) -> None:
         ("o0500_0000", fixtures.ITEM_LOTS[0]),
         ("o0510_0000", fixtures.ITEM_LOTS[2]),
     ]
+    # The platoon's characters, which Soulstruct reads under a name its platoon event lacks, are kept.
+    (platoon,) = msb.platoons
+    assert [c.name for c in platoon.platoon_characters if c is not None] == ["c2800_0000", "c2800_0001"]
+    assert relaxed["unresolved"] == 0
     # Soulstruct's own checks are back.
     with pytest.raises(Exception):
         bloodborne_msb_class().from_bytes(layout)
@@ -110,5 +114,25 @@ def test_a_layout_the_relaxed_reading_turns_down_says_why(layout: bytes, tmp_pat
     with pytest.raises(LayoutUnreadable) as caught:
         load_msb(PROFILES["bloodborne"], area, [])
     message = str(caught.value)
-    assert message.startswith("read with relaxed checks: RuntimeError: made-up failure after reading; with Soulstruct's checks: ")
+    # It says where the relaxed reading failed, so a report shows the place to look.
+    assert message.startswith("read with relaxed checks: RuntimeError: made-up failure after reading (in broken of test_msb.py:")
+    assert "; with Soulstruct's checks: " in message
     assert len(message) < 400
+
+
+def test_a_list_of_references_read_into_no_field_refers_to_nothing(layout: bytes, monkeypatch) -> None:
+    # Should Soulstruct name another list one way in a struct and a different way in its entry, the list is left
+    # referring to nothing rather than the whole layout being turned down.
+    import atlas_gamefiles.msb as msb_module
+    from soulstruct.bloodborne.maps.events import MSBPlatoonEvent
+
+    original = msb_module._init_fields
+    without = original(MSBPlatoonEvent) - {"_platoon_characters_indices"}
+    monkeypatch.setattr(msb_module, "_init_fields", lambda cls: without if cls is MSBPlatoonEvent else original(cls))
+    relaxed: Counter[str] = Counter()
+    with lenient_layout_reading(relaxed):
+        msb = bloodborne_msb_class().from_bytes(layout)
+    (platoon,) = msb.platoons
+    assert relaxed["unresolved"] == 1
+    assert all(c is None for c in platoon.platoon_characters)
+    assert "lists of references read into no field" in msb_module.lenient_note(relaxed)
