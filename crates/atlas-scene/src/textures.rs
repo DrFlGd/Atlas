@@ -31,6 +31,11 @@
 //!   ([`crate::Options::one_cell`]) is one cell, so each picture is in
 //!   each of its files once.
 //!
+//! With [`TextureOptions::once`], the cells are chosen so that each
+//! picture's triangles are in one cell ([`crate::cells`]): then each
+//! picture is in one file of each level, so the files' size follows the
+//! pictures the model has, not how many cells show them.
+//!
 //! A later step may write the pictures as KTX2 with Basis Universal
 //! (`KHR_texture_basisu`, which Atlas reads already): [`encode`] is where
 //! a picture's bytes are made, and the writer ([`crate::glb`]) takes any
@@ -81,6 +86,12 @@ pub struct TextureOptions {
     /// smaller until each holds no more (64 MB when absent).
     #[serde(default)]
     pub cell_bytes: Option<u64>,
+    /// Each picture in one cell's files only, at each level: its triangles
+    /// are put in one cell, of the grid or of a coarser grid above it
+    /// ([`crate::cells`]), so the files hold each picture once whatever the
+    /// cells, and `cellBytes` is not needed. Off by default.
+    #[serde(default)]
+    pub once: bool,
 }
 
 impl TextureOptions {

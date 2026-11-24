@@ -337,8 +337,9 @@ function MapMaker() {
           </select>
           <span id="look-3d-note" className="small muted">
             Game models makes each 3D map from the game’s own models, with every texture at its own
-            size up close; an area whose models cannot be read is made from its collision, and its
-            report says so. Collision makes it from the ground and walls, coloured as the map.
+            size up close (Dark Souls Remastered and Bloodborne). An area whose models or textures
+            cannot be read, or whose 3D map would be too large, is made from its collision, and its
+            report says why. Collision makes it from the ground and walls, coloured as the map.
           </span>
         </div>
         <MapStyleChoice
