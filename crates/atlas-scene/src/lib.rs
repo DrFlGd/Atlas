@@ -25,7 +25,8 @@
 //!    first (split where faces meet at more than `creaseAngle`), so no seam
 //!    shows between cells.
 //! 5. **Compresses** each file with `EXT_meshopt_compression`. Textures are
-//!    left out for now ([`textures`]).
+//!    left out, kept as their average colour, or kept as pictures in each
+//!    file that uses them, smaller for coarser levels ([`textures`]).
 //! 6. **Draws it from above** when asked ([`render`]): a picture per floor
 //!    or of the whole map, cut into map image tiles.
 //! 7. **Checks** the scene and its files ([`check`]) and returns the scene
@@ -67,6 +68,9 @@ use serde_json::{json, Value};
 use gltf::{Material, Model};
 use render::{RenderOptions, Rendered, Surface};
 use textures::TextureOptions;
+
+/// A cell whose finest file holds more bytes of pictures than this is named in a warning.
+pub const LARGE_CELL_TEXTURES: u64 = 64 << 20;
 
 /// The program's name and version, written into each model file.
 pub const GENERATOR: &str = concat!("Atlas scene builder ", env!("CARGO_PKG_VERSION"));
@@ -172,6 +176,20 @@ pub struct LevelReport {
     pub cells: usize,
     pub triangles: usize,
     pub bytes: u64,
+    /// The bytes of pictures in those files (part of `bytes`).
+    pub texture_bytes: u64,
+}
+
+/// The pictures of one cell's file at one level, when textures are kept.
+#[derive(Clone, Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CellTextures {
+    pub cell: String,
+    pub level: u32,
+    /// How many pictures the file holds.
+    pub pictures: usize,
+    /// Their bytes.
+    pub bytes: u64,
 }
 
 /// How a build went.
@@ -194,8 +212,14 @@ pub struct Report {
     pub bytes: u64,
     pub seconds: f64,
     pub compressed: bool,
-    /// Materials with a texture, left out in this version.
+    /// Materials with a texture that is not kept as one.
     pub textures_left_out: usize,
+    /// Materials whose texture is kept (textures `keep`).
+    pub textures_kept: usize,
+    /// The bytes of pictures in all files.
+    pub texture_bytes: u64,
+    /// The pictures of each cell's file at each level (textures `keep`).
+    pub cell_textures: Vec<CellTextures>,
     /// Primitives that are not triangles.
     pub primitives_skipped: usize,
     pub warnings: Vec<String>,
@@ -339,6 +363,8 @@ struct Welded {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     colors: Vec<[f32; 4]>,
+    /// Texture coordinates, when they are kept (all zero otherwise).
+    uvs: Vec<[f32; 2]>,
     /// The position each vertex stands on (vertices split at a crease or a
     /// change of colour share one).
     place: Vec<u32>,
@@ -361,8 +387,15 @@ impl Welded {
 }
 
 /// Lines the parts up, welds their vertices, leaves out flat and repeated
-/// triangles and works out the normals.
-fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64) -> Welded {
+/// triangles and works out the normals. With `keep_uvs`, a vertex keeps its
+/// texture coordinates too (vertices that differ in them are not joined).
+fn weld(
+    model: &Model,
+    kept: &[usize],
+    transform: &Transform,
+    crease_angle: f64,
+    keep_uvs: bool,
+) -> Welded {
     let mirror = transform.mirrors();
     let mut low = [f64::INFINITY; 3];
     let mut high = [f64::NEG_INFINITY; 3];
@@ -394,6 +427,7 @@ fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64)
     struct Face {
         place: [u32; 3],
         colors: [[f32; 4]; 3],
+        uvs: [[f32; 2]; 3],
         material: u32,
     }
     let mut faces: Vec<Face> = Vec::new();
@@ -445,9 +479,14 @@ fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64)
                 Some(colors) => corners.map(|c| colors[c]),
                 None => [[1.0; 4]; 3],
             };
+            let uvs = match (&part.uvs, keep_uvs) {
+                (Some(uvs), true) => corners.map(|c| uvs[c]),
+                _ => [[0.0; 2]; 3],
+            };
             faces.push(Face {
                 place,
                 colors,
+                uvs,
                 material: part.material as u32,
             });
         }
@@ -485,13 +524,16 @@ fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64)
     }
     let limit = crease_angle.clamp(0.0, 180.0).to_radians().cos();
 
-    // Vertices: a place, a colour and a normal (8 bits a component, as written).
-    let mut vertex_of: HashMap<(u32, [u32; 4], [i8; 3]), u32> = HashMap::new();
+    // Vertices: a place, a colour, a normal (8 bits a component, as
+    // written) and texture coordinates.
+    type VertexKey = (u32, [u32; 4], [i8; 3], [u32; 2]);
+    let mut vertex_of: HashMap<VertexKey, u32> = HashMap::new();
     let mut welded = Welded {
         origin,
         positions: Vec::new(),
         normals: Vec::new(),
         colors: Vec::new(),
+        uvs: Vec::new(),
         place: Vec::new(),
         places: places.len(),
         triangles: Vec::with_capacity(faces.len()),
@@ -516,11 +558,13 @@ fn weld(model: &Model, kept: &[usize], transform: &Transform, crease_angle: f64)
             let normal = if l > 1e-12 { sum.map(|v| v / l) } else { own };
             let quantized = normal.map(|v| (v.clamp(-1.0, 1.0) * 127.0).round() as i8);
             let color = face.colors[corner];
-            let key = (p as u32, color.map(bits), quantized);
+            let uv = face.uvs[corner];
+            let key = (p as u32, color.map(bits), quantized, uv.map(bits));
             triangle[corner] = *vertex_of.entry(key).or_insert_with(|| {
                 welded.positions.push(places[p].map(|v| v as f32));
                 welded.normals.push(normal.map(|v| v as f32));
                 welded.colors.push(color);
+                welded.uvs.push(uv);
                 welded.place.push(p as u32);
                 (welded.positions.len() - 1) as u32
             });
@@ -571,28 +615,42 @@ pub fn build(
     if options.levels.len() > check::MAX_LEVEL as usize {
         return Err("a cell has at most 7 coarser levels".to_owned());
     }
+    options.textures.max_side()?;
+    let keeping = options.textures.mode == textures::TextureMode::Keep;
     let mut report = Report {
         triangles_in: model.triangles(),
         compressed: options.compress,
-        textures_left_out: textures::left_out(model),
+        textures_left_out: textures::left_out(model, &options.textures),
+        textures_kept: if keeping {
+            model
+                .materials
+                .iter()
+                .filter(|m| m.texture.is_some())
+                .count()
+        } else {
+            0
+        },
         primitives_skipped: model.skipped_primitives,
         ..Report::default()
     };
-    let averaged = options.textures.mode == textures::TextureMode::Average;
     if report.textures_left_out > 0 {
-        report.warnings.push(if averaged {
-            format!(
-                "{} materials have a texture; textures come in a later version, so they keep their texture's average colour",
+        report.warnings.push(match options.textures.mode {
+            textures::TextureMode::Average => format!(
+                "{} materials have a texture; textures are not kept in this build, so they keep their texture's average colour",
                 report.textures_left_out
-            )
-        } else {
-            format!(
-                "{} materials have a texture; textures come in a later version, so they keep their colour only",
+            ),
+            textures::TextureMode::Keep => format!(
+                "{} materials have a texture whose picture is not a PNG or JPEG picture in the file, so they keep their colour only",
                 report.textures_left_out
-            )
+            ),
+            textures::TextureMode::LeaveOut => format!(
+                "{} materials have a texture; textures are not kept in this build, so they keep their colour only",
+                report.textures_left_out
+            ),
         });
     }
     let materials = textures::materials_for(model, &options.textures);
+    let mut pictures = textures::Pictures::new(model, options.textures);
 
     // 2. What is never seen.
     progress(0.02, "leaving out what is never seen");
@@ -618,7 +676,7 @@ pub fn build(
 
     // 1. Lined up with the world; welded, with normals.
     progress(0.05, "lining the model up and joining its vertices");
-    let welded = weld(model, &kept, &transform, options.crease_angle);
+    let welded = weld(model, &kept, &transform, options.crease_angle, keeping);
     report.triangles_cleaned = welded.cleaned;
     if welded.triangles.is_empty() {
         return Err("nothing is left of the model to show".to_owned());
@@ -754,6 +812,11 @@ pub fn build(
             .iter()
             .map(|&v| welded.colors[v as usize])
             .collect();
+        let uvs: Vec<[f32; 2]> = if keeping {
+            vertices.iter().map(|&v| welded.uvs[v as usize]).collect()
+        } else {
+            Vec::new()
+        };
         let locks: Vec<bool> = vertices
             .iter()
             .map(|&v| locked[welded.place[v as usize] as usize])
@@ -768,11 +831,14 @@ pub fn build(
         let adapter = meshopt::VertexDataAdapter::new(&bytes, 12, 0).map_err(|e| e.to_string())?;
         let color_weight = (0.05 * side) as f32;
         let normal_weight = (0.01 * side) as f32;
+        // Texture coordinates, when kept, weigh as a hundredth of the side per repeat.
+        let uv_weight = if keeping { (0.01 * side) as f32 } else { 0.0 };
         let attributes: Vec<f32> = (0..vertices.len())
             .flat_map(|i| {
                 let c = colors[i];
                 let n = normals[i];
-                [c[0], c[1], c[2], n[0], n[1], n[2]]
+                let uv = uvs.get(i).copied().unwrap_or([0.0; 2]);
+                [c[0], c[1], c[2], n[0], n[1], n[2], uv[0], uv[1]]
             })
             .collect();
         let weights = [
@@ -782,6 +848,8 @@ pub fn build(
             normal_weight,
             normal_weight,
             normal_weight,
+            uv_weight,
+            uv_weight,
         ];
         let mut lods: Vec<Value> = Vec::new();
         let mut previous = usize::MAX;
@@ -806,7 +874,7 @@ pub fn build(
                             &adapter,
                             &attributes,
                             &weights,
-                            6 * 4,
+                            8 * 4,
                             &locks,
                             goal,
                             (settings.error * side) as f32,
@@ -821,18 +889,40 @@ pub fn build(
             if level > 0 && (triangles == 0 || triangles as f64 > 0.85 * previous as f64) {
                 break;
             }
+            let primitives: Vec<glb::GlbPrimitive> = primitives
+                .into_iter()
+                .map(|(material, indices)| glb::GlbPrimitive {
+                    texture: material
+                        .texture
+                        .and_then(|texture| pictures.at(texture.image, level)),
+                    material,
+                    indices,
+                })
+                .collect();
             let name = format!("{id} level {level}");
-            let (file_bytes, written) = glb::write_glb(
+            let written_file = glb::write_glb(
                 glb::GlbMesh {
                     name: &name,
                     positions: positions.clone(),
                     normals: normals.clone(),
                     colors: has_colors.then(|| colors.clone()),
+                    uvs: keeping.then(|| uvs.clone()),
                     primitives,
                 },
                 options.compress,
                 GENERATOR,
             )?;
+            let file_bytes = written_file.bytes;
+            let written = written_file.triangles;
+            if keeping && written_file.texture_bytes > 0 {
+                report.texture_bytes += written_file.texture_bytes;
+                report.cell_textures.push(CellTextures {
+                    cell: id.clone(),
+                    level: level as u32,
+                    pictures: written_file.pictures,
+                    bytes: written_file.texture_bytes,
+                });
+            }
             if file_bytes.len() as u64 > check::MAX_FILE_BYTES {
                 return Err(format!(
                     "cell {id} level {level} would be over 256 MB; give a smaller cellSize"
@@ -850,6 +940,7 @@ pub fn build(
             entry.cells += 1;
             entry.triangles += written;
             entry.bytes += file_bytes.len() as u64;
+            entry.texture_bytes += written_file.texture_bytes;
             lods.push(json!({ "level": level, "file": file, "triangles": written }));
             previous = written;
         }
@@ -864,6 +955,25 @@ pub fn build(
     }
     report.cells = cells.len();
     report.triangles = level_reports[0].triangles;
+    if !pictures.unreadable.is_empty() {
+        report.warnings.push(format!(
+            "{} pictures of textures could not be read, so the materials that show them keep their colour only",
+            pictures.unreadable.len()
+        ));
+    }
+    if let Some(largest) = report
+        .cell_textures
+        .iter()
+        .filter(|c| c.level == 0)
+        .max_by_key(|c| c.bytes)
+        .filter(|c| c.bytes > LARGE_CELL_TEXTURES)
+    {
+        report.warnings.push(format!(
+            "cell {} holds {} MB of pictures at its finest level; a smaller textures.maxSize makes it lighter",
+            largest.cell,
+            largest.bytes.div_ceil(1 << 20)
+        ));
+    }
     report.levels = level_reports.into_iter().filter(|l| l.cells > 0).collect();
 
     let mut scene = json!({
@@ -888,7 +998,14 @@ pub fn build(
                 let mut out = vec![[1.0f32; 3]; welded.positions.len()];
                 let mut done = vec![false; welded.positions.len()];
                 for (t, triangle) in welded.triangles.iter().enumerate() {
-                    let base = materials[welded.materials[t] as usize].color;
+                    let m = welded.materials[t] as usize;
+                    // A kept texture is drawn from above as its average colour.
+                    let base = if keeping {
+                        let c = textures::drawn_colour(&model.materials[m]);
+                        [c[0], c[1], c[2], 1.0]
+                    } else {
+                        materials[m].color
+                    };
                     for &v in triangle {
                         if !std::mem::replace(&mut done[v as usize], true) {
                             let c = welded.colors[v as usize];

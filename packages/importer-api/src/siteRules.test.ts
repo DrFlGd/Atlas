@@ -1249,6 +1249,21 @@ describe('a map part of 3D models', () => {
     ]);
   });
 
+  it('keeps the model’s textures or their average colours, as the file says', () => {
+    for (const textures of ['keep', 'average'] as const) {
+      expect(messages(withModels((m) => Object.assign(m.model, { textures })))).toEqual([]);
+    }
+    expect(
+      messages(withModels((m) => Object.assign(m.model, { textures: 'keep', textureSize: 2048 }))),
+    ).toEqual([]);
+    expect(messages(withModels((m) => Object.assign(m.model, { textures: 'full' })))).toHaveLength(
+      1,
+    );
+    for (const textureSize of [1000, 8, 16384, 2048.5]) {
+      expect(messages(withModels((m) => Object.assign(m.model, { textureSize })))).toHaveLength(1);
+    }
+  });
+
   it('names each map once, each axis once, and every entry of its lists', () => {
     expect(
       messages(withModels((m) => m.maps.push({ id: 'harbour', name: 'Harbour again' }))),

@@ -260,6 +260,32 @@ def _detect_bloodborne(folder: Path) -> Detection | None:
     return detection
 
 
+# The Bloodborne versions Make map knows (param.sfo's APP_VER). Map layouts, collision and item tables change between
+# updates, so another version is refused rather than mapped wrongly.
+BLOODBORNE_MAP_VERSIONS = ("01.09",)
+
+
+def map_version_refusal(detection: Detection) -> str | None:
+    """Why Make map refuses this game's version (None: it does not). Bloodborne: version 1.09 only, read from
+    `sce_sys/param.sfo`; a dump whose version cannot be read is refused too. Check game files reads any version."""
+    if detection.game != BLOODBORNE:
+        return None
+    version = detection.details.get("appVersion")
+    if not version:
+        return (
+            "The Map Maker could not read the version of this Bloodborne game folder (sce_sys/param.sfo next to "
+            "dvdroot_ps4), and it makes maps of version 1.09 only. Choose your Bloodborne 1.09 game folder "
+            "(dvdroot_ps4)."
+        )
+    if str(version) not in BLOODBORNE_MAP_VERSIONS:
+        shown = str(version).lstrip("0") or str(version)
+        return (
+            f"This Bloodborne game folder is version {shown}, and the Map Maker makes maps of version 1.09 only (its map "
+            "layouts and item tables differ between versions). Choose your Bloodborne 1.09 game folder (dvdroot_ps4)."
+        )
+    return None
+
+
 DETECTORS: tuple[tp.Callable[[Path], Detection | None], ...] = (_detect_dsr, _detect_bloodborne, _detect_ptde)
 
 

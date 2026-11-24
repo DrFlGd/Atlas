@@ -1,10 +1,12 @@
 //! The Map Maker's settings, in `settings.json` in the app's config folder: the last game folder, whether Make
-//! map also makes 3D maps, the map style, and the last make (so its report, and Adjust floors, are there when the app opens again).
+//! map also makes 3D maps, the map style, how floors are found, the last make (so its report, and Adjust floors,
+//! are there when the app opens again), and per area how a picture to compare with was laid over its map.
 //! The player's own floor cuts are in `floor-overrides.json` beside it (see overrides.rs).
 
 use std::{fs, path::Path};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -16,9 +18,15 @@ pub struct Settings {
     /// "Map style" (the helper's render.MAP_STYLES): how the floors are drawn; "shaded" when never chosen.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub map_style: Option<String>,
+    /// "Floors" (FLOOR_METHODS): how Make map finds floors; none when never chosen (as suits the game).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub floor_method: Option<String>,
     /// The last make: its game folder and output folder.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_make: Option<LastMake>,
+    /// "Compare with a picture…": per `game:mAA_BB`, the picture and how it lies over the map (clean_alignment).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compare: Option<Map<String, Value>>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +47,113 @@ impl Settings {
             .filter(|style| is_map_style(style))
             .unwrap_or(DEFAULT_MAP_STYLE)
     }
+
+    /// "Floors", when chosen: `passages` or `cuts`.
+    pub fn floor_method(&self) -> Option<&str> {
+        self.floor_method
+            .as_deref()
+            .filter(|method| is_floor_method(method))
+    }
+
+    /// The pictures to compare with, and how each lies over its area's map.
+    pub fn compare(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        for (key, value) in self.compare.iter().flatten() {
+            if let (true, Some(value)) = (is_compare_key(key), clean_alignment(value)) {
+                out.insert(key.clone(), value);
+            }
+        }
+        out
+    }
+
+    /// Sets (or with `None` forgets) the picture of one area. Returns them all.
+    pub fn set_compare(
+        &mut self,
+        key: &str,
+        alignment: Option<&Value>,
+    ) -> Result<Map<String, Value>, String> {
+        if !is_compare_key(key) {
+            return Err(format!("{key} is not an area of a game."));
+        }
+        let mut all = self.compare();
+        match alignment.and_then(clean_alignment) {
+            Some(value) => {
+                if !all.contains_key(key) && all.len() >= MAX_COMPARED {
+                    return Err("Too many pictures are remembered: forget one first.".to_owned());
+                }
+                all.insert(key.to_owned(), value);
+            }
+            None => {
+                all.remove(key);
+            }
+        }
+        self.compare = (!all.is_empty()).then(|| all.clone());
+        Ok(all)
+    }
+
+    /// Whether `path` is a picture remembered for some area (only those are opened again without asking).
+    pub fn remembers_picture(&self, path: &str) -> bool {
+        self.compare()
+            .values()
+            .any(|value| value.get("picture").and_then(Value::as_str) == Some(path))
+    }
+}
+
+/// How floors can be found (the helper's `--floor-method`).
+pub const FLOOR_METHODS: [&str; 2] = ["passages", "cuts"];
+
+pub fn is_floor_method(method: &str) -> bool {
+    FLOOR_METHODS.contains(&method)
+}
+
+const MAX_COMPARED: usize = 256;
+const MAX_PICTURE_PATH: usize = 1024;
+
+/// `game:mAA_BB`, the key of one area's picture.
+pub fn is_compare_key(key: &str) -> bool {
+    match key.split_once(':') {
+        Some((game, area)) => {
+            crate::overrides::is_game(game)
+                && crate::overrides::area_key(area).as_deref() == Some(area)
+        }
+        None => false,
+    }
+}
+
+fn number(value: &Value, key: &str, low: f64, high: f64, default: f64) -> Value {
+    let n = value
+        .get(key)
+        .and_then(Value::as_f64)
+        .filter(|n| n.is_finite())
+        .map_or(default, |n| n.clamp(low, high));
+    serde_json::json!((n * 10_000.0).round() / 10_000.0)
+}
+
+/// One area's picture to compare with: `picture` (its path on this computer), `x` and `y` (where its middle lies
+/// over the map, as fractions of the map picture's width and height), `scale` (its width as a fraction of the
+/// map's), `turn` (degrees, clockwise), `opacity` (0 to 1, over the map) and `view` (`overlay` or `side`). Numbers
+/// are kept in range; `None` without a picture.
+pub fn clean_alignment(value: &Value) -> Option<Value> {
+    let picture = value.get("picture")?.as_str()?;
+    if picture.is_empty()
+        || picture.chars().count() > MAX_PICTURE_PATH
+        || picture.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let view = match value.get("view").and_then(Value::as_str) {
+        Some("side") => "side",
+        _ => "overlay",
+    };
+    Some(serde_json::json!({
+        "picture": picture,
+        "x": number(value, "x", -1e6, 1e6, 0.0),
+        "y": number(value, "y", -1e6, 1e6, 0.0),
+        "scale": number(value, "scale", 0.001, 1000.0, 1.0),
+        "turn": number(value, "turn", -360.0, 360.0, 0.0),
+        "opacity": number(value, "opacity", 0.0, 1.0, 0.5),
+        "view": view,
+    }))
 }
 
 /// The map styles the helper can draw now (the textured ones need the game's textures, not read yet).
@@ -91,19 +206,51 @@ mod tests {
         assert_eq!(read(&file), Settings::default());
         assert!(read(&file).make_3d(), "3D maps are on until turned off");
         assert_eq!(read(&file).map_style(), "shaded");
-        let settings = Settings {
+        let mut settings = Settings {
             last_folder: Some(r"C:\Games\DARK SOULS REMASTERED".into()),
             make_3d: Some(false),
             map_style: Some("outlines".into()),
+            floor_method: Some("passages".into()),
             last_make: Some(LastMake {
                 folder: r"C:\Games\DARK SOULS REMASTERED".into(),
                 out: r"C:\Users\Someone\AppData\Local\Atlas Map Maker\makes\run-1".into(),
             }),
+            compare: None,
         };
+        settings
+            .set_compare(
+                "bloodborne:m24_01",
+                Some(&serde_json::json!({"picture": r"C:\Pictures\made-up.png", "scale": 2.5, "turn": 900, "view": "side"})),
+            )
+            .unwrap();
         write(&file, &settings).unwrap();
         assert_eq!(read(&file), settings);
         assert!(!read(&file).make_3d());
         assert_eq!(read(&file).map_style(), "outlines");
+        assert_eq!(read(&file).floor_method(), Some("passages"));
+        let compared = read(&file).compare();
+        assert_eq!(
+            compared["bloodborne:m24_01"]["turn"], 360.0,
+            "kept in range"
+        );
+        assert_eq!(compared["bloodborne:m24_01"]["opacity"], 0.5);
+        assert_eq!(compared["bloodborne:m24_01"]["view"], "side");
+        assert!(read(&file).remembers_picture(r"C:\Pictures\made-up.png"));
+        assert!(!read(&file).remembers_picture(r"C:\Windows\win.ini"));
+        let mut forget = read(&file);
+        assert!(forget
+            .set_compare("bloodborne:m24_01", None)
+            .unwrap()
+            .is_empty());
+        assert_eq!(forget.compare, None);
+        assert!(forget.set_compare("../x", None).is_err());
+        assert!(
+            forget
+                .set_compare("g:m10_01", Some(&serde_json::json!({"x": 1})))
+                .unwrap()
+                .is_empty(),
+            "no picture, nothing kept"
+        );
         let unknown = Settings {
             map_style: Some("textured".into()),
             ..Settings::default()

@@ -82,6 +82,9 @@ def test_raw_model_has_a_node_per_part_and_floors_face_up() -> None:
     normal = np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0])
     assert (normal[:, 1] > 0).all(), "turned to face up"
     assert positions["min"] == [0.0, 0.0, 0.0] and positions["max"] == [4.0, 0.0, 4.0]
+    # Collision is drawn from both sides in the 3D view.
+    assert document["materials"][0]["doubleSided"] is True
+    assert document["meshes"][1]["primitives"][0]["material"] == 0
 
 
 def test_colours_follow_height_and_slope() -> None:

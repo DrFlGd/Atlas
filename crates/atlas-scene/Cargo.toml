@@ -1,6 +1,6 @@
 [package]
 name = "atlas-scene"
-version = "0.1.0"
+version = "0.2.0"
 description = "Builds the 3D model of an Atlas map from a raw glTF model: lines it up with the game's world, drops what is never seen, cuts it into square cells with levels of detail, compresses it, draws it from above and checks the result"
 edition = "2021"
 license = "MIT"
@@ -35,6 +35,10 @@ png = "=0.18.1"
 # in pure Rust. MIT OR Apache-2.0 OR Zlib.
 zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
 zune-core = { version = "=0.5.3", default-features = false, features = ["std"] }
+# Keeping a model's textures (`textures`, mode `keep`): resizing them and
+# writing them again as PNG or JPEG, in pure Rust (the same crate and
+# version the desktop shell has already). MIT OR Apache-2.0.
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png"] }
 
 [profile.release]
 codegen-units = 1

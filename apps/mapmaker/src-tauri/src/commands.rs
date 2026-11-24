@@ -35,6 +35,8 @@ pub struct AppInfo {
     make_3d: bool,
     /// "Map style", as last chosen.
     map_style: String,
+    /// "Floors", as last chosen: `passages` or `cuts`; none for as suits the game.
+    floor_method: Option<String>,
     last_folder: Option<String>,
     typical_folder: Option<String>,
     /// Where Make map installs the pack: the Atlas viewer's maps folder.
@@ -91,6 +93,7 @@ pub fn app_info<R: Runtime>(app: AppHandle<R>) -> Result<AppInfo, String> {
         scene_builder_found: checks::find_scene_builder().is_some(),
         make_3d: settings.make_3d(),
         map_style: settings.map_style().to_owned(),
+        floor_method: settings.floor_method().map(str::to_owned),
         last_folder: settings.last_folder,
         typical_folder: settings::typical_folder(),
         maps_folder: viewer_maps_folder(&app)
@@ -160,9 +163,18 @@ fn checked_style(
     }
 }
 
+/// The floor method asked for: `passages` or `cuts`, or none (`game`, or nothing) for as suits the game.
+fn checked_method(floor_method: Option<String>) -> Result<Option<String>, String> {
+    match floor_method.as_deref() {
+        None | Some("game") => Ok(None),
+        Some(method) if settings::is_floor_method(method) => Ok(Some(method.to_owned())),
+        Some(method) => Err(format!("{method} is not a way of finding floors.")),
+    }
+}
+
 /// Starts making the map pack of `folder`, installed in the Atlas viewer's maps folder, with 3D maps when
-/// `make_3d` ("Also make 3D maps") and drawn in `map_style` (both remembered). Its report goes to a new folder in
-/// the app's own data.
+/// `make_3d` ("Also make 3D maps"), drawn in `map_style`, its floors found by `floor_method` (all three
+/// remembered). Its report goes to a new folder in the app's own data.
 #[tauri::command]
 pub fn make_start<R: Runtime>(
     app: AppHandle<R>,
@@ -170,14 +182,20 @@ pub fn make_start<R: Runtime>(
     folder: String,
     make_3d: bool,
     map_style: Option<String>,
+    floor_method: Option<String>,
 ) -> Result<Status, String> {
     let maps_folder = viewer_maps_folder(&app)?;
     let file = settings_file(&app)?;
     let mut settings = settings::read(&file);
     let map_style = checked_style(map_style, &settings)?;
-    if settings.make_3d() != make_3d || settings.map_style() != map_style {
+    let floor_method = checked_method(floor_method)?;
+    if settings.make_3d() != make_3d
+        || settings.map_style() != map_style
+        || settings.floor_method() != floor_method.as_deref()
+    {
         settings.make_3d = Some(make_3d);
         settings.map_style = Some(map_style.clone());
+        settings.floor_method = floor_method.clone();
         let _ = settings::write(&file, &settings);
     }
     let job = Job::Make {
@@ -186,6 +204,7 @@ pub fn make_start<R: Runtime>(
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
         map_style,
+        floor_method,
     };
     start(&app, &checks, folder, job, "makes")
 }
@@ -201,7 +220,8 @@ pub fn remake_start<R: Runtime>(
     make_3d: bool,
     map_style: Option<String>,
 ) -> Result<Status, String> {
-    let map_style = checked_style(map_style, &settings::read(&settings_file(&app)?))?;
+    let settings = settings::read(&settings_file(&app)?);
+    let map_style = checked_style(map_style, &settings)?;
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let (folder, out_dir, _) = checks
         .last_make()
@@ -223,6 +243,8 @@ pub fn remake_start<R: Runtime>(
         scene_builder: checks::find_scene_builder(),
         floor_overrides: floor_overrides_for_helper(&app),
         map_style,
+        // An area's own choice is in the floor cuts file; otherwise as the last make.
+        floor_method: settings.floor_method().map(str::to_owned),
         area: key,
     };
     checks.start(&helper, job, &folder, &out_dir)
@@ -362,7 +384,8 @@ pub async fn floor_views_open(
         .map_err(|error| error.to_string())?
 }
 
-/// The Adjust floors views for these cuts and names.
+/// The Adjust floors views for these cuts and names, or with `method` `passages`, for automatic passages with
+/// these Upper / Lower choices.
 #[tauri::command]
 pub async fn floor_views_request(
     views: State<'_, FloorViews>,
@@ -370,6 +393,8 @@ pub async fn floor_views_request(
     cuts: Vec<f64>,
     names: Vec<String>,
     outlines: Option<bool>,
+    method: Option<String>,
+    passages: Option<Value>,
 ) -> Result<Value, String> {
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let cuts: Vec<f64> = cuts
@@ -384,14 +409,117 @@ pub async fn floor_views_request(
         .collect();
     let views = views.inner().clone();
     let outlines = outlines.unwrap_or(false);
-    tauri::async_runtime::spawn_blocking(move || views.request(&key, &cuts, &names, outlines))
-        .await
-        .map_err(|error| error.to_string())?
+    let method = checked_method(method)?.unwrap_or_else(|| "cuts".to_owned());
+    // Kept to what the helper reads, as in the floor cuts file.
+    let passages =
+        overrides::clean_entry(&serde_json::json!({ "passages": passages.unwrap_or(Value::Null) }))
+            .and_then(|entry| entry.get("passages").cloned())
+            .unwrap_or_else(|| Value::Array(Vec::new()));
+    tauri::async_runtime::spawn_blocking(move || {
+        views.request(&key, &cuts, &names, outlines, &method, &passages)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
 pub fn floor_views_close(views: State<'_, FloorViews>) {
     views.close();
+}
+
+/// The pictures to compare with, per `game:mAA_BB`, and how each lies over its map (settings::clean_alignment).
+#[tauri::command]
+pub fn compare_read<R: Runtime>(app: AppHandle<R>) -> Result<Value, String> {
+    Ok(Value::Object(
+        settings::read(&settings_file(&app)?).compare(),
+    ))
+}
+
+/// Remembers (or with no `alignment` forgets) how one area's picture lies over its map. Returns them all.
+#[tauri::command]
+pub fn compare_set<R: Runtime>(
+    app: AppHandle<R>,
+    key: String,
+    alignment: Option<Value>,
+) -> Result<Value, String> {
+    let file = settings_file(&app)?;
+    let mut settings = settings::read(&file);
+    let all = settings.set_compare(&key, alignment.as_ref())?;
+    settings::write(&file, &settings)?;
+    Ok(Value::Object(all))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Picture {
+    name: String,
+    path: String,
+    /// The picture as a `data:` URL.
+    url: String,
+}
+
+/// A larger picture is not opened.
+const MAX_PICTURE_BYTES: u64 = 40 * 1024 * 1024;
+
+fn picture_at(path: &Path) -> Result<Picture, String> {
+    let size = fs::metadata(path)
+        .map_err(|_| format!("The picture {} is not there any more.", path.display()))?
+        .len();
+    if size > MAX_PICTURE_BYTES {
+        return Err("That picture is too large (more than 40 MB).".to_owned());
+    }
+    let bytes =
+        fs::read(path).map_err(|error| format!("Could not read {}: {error}", path.display()))?;
+    let kind = picture_kind(&bytes).ok_or("That file is not a PNG or JPEG picture.")?;
+    Ok(Picture {
+        name: file_name(path),
+        path: path.display().to_string(),
+        url: format!("data:{kind};base64,{}", checks::base64(&bytes)),
+    })
+}
+
+/// The type of a PNG or JPEG picture, by its first bytes.
+fn picture_kind(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else {
+        None
+    }
+}
+
+/// "Compare with a picture…": asks for a PNG or JPEG picture and opens it (it is only shown, never copied into a
+/// map pack). `None` when the dialog was closed.
+#[tauri::command]
+pub async fn compare_pick_picture<R: Runtime>(
+    window: WebviewWindow<R>,
+) -> Result<Option<Picture>, String> {
+    let mut dialog = window
+        .dialog()
+        .file()
+        .set_parent(&window)
+        .set_title("Choose a picture to compare with")
+        .add_filter("Pictures", &["png", "jpg", "jpeg"]);
+    if let Ok(pictures) = window.path().picture_dir() {
+        dialog = dialog.set_directory(pictures);
+    }
+    let Some(path) = chosen_path(|done| dialog.pick_file(done)).await? else {
+        return Ok(None);
+    };
+    picture_at(&path).map(Some)
+}
+
+/// Opens again a picture remembered for an area (only those: any other path is refused).
+#[tauri::command]
+pub fn compare_open_picture<R: Runtime>(
+    app: AppHandle<R>,
+    path: String,
+) -> Result<Picture, String> {
+    if !settings::read(&settings_file(&app)?).remembers_picture(&path) {
+        return Err("That picture is not one you chose to compare with.".to_owned());
+    }
+    picture_at(Path::new(&path))
 }
 
 fn start<R: Runtime>(
@@ -543,7 +671,21 @@ fn safe_file_name(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_file_name;
+    use super::{checked_method, picture_kind, safe_file_name};
+
+    #[test]
+    fn floor_methods_and_pictures() {
+        assert_eq!(checked_method(None).unwrap(), None);
+        assert_eq!(checked_method(Some("game".into())).unwrap(), None);
+        assert_eq!(
+            checked_method(Some("passages".into())).unwrap().as_deref(),
+            Some("passages")
+        );
+        assert!(checked_method(Some("stairs".into())).is_err());
+        assert_eq!(picture_kind(b"\x89PNG\r\n\x1a\nmore"), Some("image/png"));
+        assert_eq!(picture_kind(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(picture_kind(b"GIF89a"), None);
+    }
 
     #[test]
     fn suggested_names_are_safe() {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ComparePanel } from './Compare';
 import { FloorsPanel } from './FloorsPanel';
 import { MapStyleChoice } from './MapStyleChoice';
 import {
@@ -25,7 +26,9 @@ import {
   sourceTone,
   suggestedFileName,
   summaryLine,
+  FLOOR_METHODS,
   type AreaReport,
+  type FloorMethod,
   type GeometrySourceName,
   type MadeArea,
   type MakeReport,
@@ -78,8 +81,10 @@ function MapMaker() {
   const [saved, setSaved] = useState<SavedReport | null>(null);
   const [make3d, setMake3d] = useState(true);
   const [mapStyle, setMapStyle] = useState<MapStyleId>('shaded');
+  const [floorMethod, setFloorMethod] = useState<FloorMethod | null>(null);
   const [overrides, setOverrides] = useState<FloorOverrides>({});
   const [adjusting, setAdjusting] = useState<string | null>(null);
+  const [comparing, setComparing] = useState<string | null>(null);
 
   useEffect(() => {
     void api.appInfo().then(
@@ -88,6 +93,7 @@ function MapMaker() {
         setFolder((current) => current ?? appInfo.lastFolder);
         setMake3d(appInfo.make3d);
         setMapStyle(appInfo.mapStyle);
+        setFloorMethod(appInfo.floorMethod);
       },
       (error: unknown) => {
         setProblem(errorText(error));
@@ -133,14 +139,14 @@ function MapMaker() {
       try {
         setStatus(
           await (kind === 'make'
-            ? api.makeStart(folder, make3d, mapStyle)
+            ? api.makeStart(folder, make3d, mapStyle, floorMethod)
             : api.checkStart(folder)),
         );
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, folder, make3d, mapStyle],
+    [api, folder, make3d, mapStyle, floorMethod],
   );
 
   const cancel = useCallback(async () => {
@@ -190,6 +196,9 @@ function MapMaker() {
   const adjusted = isMakeReport(report)
     ? report.areas.find((area) => area.key === adjusting)
     : null;
+  const compared = isMakeReport(report)
+    ? report.areas.find((area) => area.key === comparing)
+    : null;
 
   return (
     <main className="mm-page">
@@ -232,7 +241,7 @@ function MapMaker() {
           </span>
           {info?.typicalFolder ? ' (found on this computer).' : '.'} In Steam you can also
           right-click the game, then Manage, Browse local files, and copy the folder from there. For
-          Bloodborne, choose your dump folder (the one with eboot.bin and dvdroot_ps4).
+          Bloodborne, choose your Bloodborne 1.09 game folder (dvdroot_ps4).
         </p>
       </section>
 
@@ -288,6 +297,32 @@ function MapMaker() {
           disabled={running}
           onChange={setMapStyle}
         />
+        <div className="mm-style">
+          <label htmlFor="floor-method">Floors</label>
+          <select
+            id="floor-method"
+            value={floorMethod ?? 'game'}
+            disabled={running}
+            aria-describedby="floor-method-note"
+            onChange={(event) => {
+              const value = event.target.value;
+              setFloorMethod(value === 'passages' || value === 'cuts' ? value : null);
+            }}
+          >
+            <option value="game">As suits the game</option>
+            {FLOOR_METHODS.map((method) => (
+              <option key={method.id} value={method.id}>
+                {method.label}
+              </option>
+            ))}
+          </select>
+          <span id="floor-method-note" className="small muted">
+            Automatic passages keep the ground whole and split it only where one walkable surface
+            lies over another (a bridge over a street); cuts split an area into floors at set
+            heights. As suits the game: automatic passages for Bloodborne, cuts for Dark Souls
+            Remastered. Each area can be changed in Adjust floors.
+          </span>
+        </div>
         <p className="muted small">
           Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
           in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
@@ -398,6 +433,7 @@ function MapMaker() {
               saved={overrides[report.game.id] ?? {}}
               running={running}
               onAdjust={setAdjusting}
+              onCompare={setComparing}
             />
           ) : (
             <Results report={report} />
@@ -427,6 +463,16 @@ function MapMaker() {
           onMakeAll={() => {
             setAdjusting(null);
             void start('make');
+          }}
+        />
+      )}
+      {isMakeReport(report) && compared && !adjusted && (
+        <ComparePanel
+          api={api}
+          game={report.game.id}
+          area={compared}
+          onClose={() => {
+            setComparing(null);
           }}
         />
       )}
@@ -712,6 +758,7 @@ interface Adjusting {
   saved: Record<string, FloorEntry>;
   running: boolean;
   onAdjust: (area: string) => void;
+  onCompare: (area: string) => void;
 }
 
 function MakeResults({ report, ...adjusting }: { report: MakeReport } & Adjusting) {
@@ -794,6 +841,22 @@ function AdjustButton({ area, running, onAdjust }: { area: MadeArea } & Adjustin
   );
 }
 
+function CompareButton({ area, running, onCompare }: { area: MadeArea } & Adjusting) {
+  if (area.skipped || !(area.floors ?? []).some((floor) => floor.preview)) return null;
+  return (
+    <button
+      type="button"
+      className="button mm-adjust"
+      disabled={running}
+      onClick={() => {
+        onCompare(area.key);
+      }}
+    >
+      Compare with a picture…
+    </button>
+  );
+}
+
 function MadeAreaRow({
   area,
   threeD,
@@ -836,6 +899,7 @@ function MadeAreaRow({
           </div>
         )}
         <AdjustButton area={area} {...adjusting} />
+        <CompareButton area={area} {...adjusting} />
       </td>
       <td className="small">
         {area.markers ? (

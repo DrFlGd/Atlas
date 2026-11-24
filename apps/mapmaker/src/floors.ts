@@ -7,7 +7,14 @@
  * empty name means "as the Map Maker names it".
  */
 import type { FloorEntry } from './shell';
-import type { HeightProfile, MadeArea } from './report';
+import type {
+  FloorMethod,
+  HeightProfile,
+  MadeArea,
+  PassageChoice,
+  PassagePlace,
+  PassageShow,
+} from './report';
 
 /** The least height between two cuts, in metres. */
 export const MIN_GAP = 0.5;
@@ -256,10 +263,14 @@ function rgbOf(hex: string): [number, number, number] {
   return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
 }
 
+/** The colour of walls and slopes in the side views of automatic passages, whose floors are not apart in height. */
+const NO_FLOOR_COLOUR = '#8a909a';
+
 /**
  * The section's pixels (see floorviews.py: 0 nothing, 1 to 127 walls by how many stand there, 128 to 255 walkable
  * floor by how near) coloured for the cuts: each row in the colour of the floor its height is on, the selected
- * floor brightest. RGBA, rows from the top height down.
+ * floor brightest. With `pixelFloors` (automatic passages: each pixel's floor, 255 for none), each walkable pixel
+ * in the colour of its own floor, walls grey. RGBA, rows from the top height down.
  */
 export function paintSection(
   pixels: Uint8Array,
@@ -269,17 +280,23 @@ export function paintSection(
   high: number,
   cuts: readonly number[],
   selected: number,
+  pixelFloors?: Uint8Array | null,
 ): Uint8ClampedArray<ArrayBuffer> {
   const out = new Uint8ClampedArray(columns * rows * 4);
   const background = [22, 26, 32];
+  const byPixel = pixelFloors?.length === columns * rows ? pixelFloors : null;
+  const grey = rgbOf(NO_FLOOR_COLOUR);
+  const palette = FLOOR_COLOURS.map(rgbOf);
   for (let row = 0; row < rows; row++) {
     const height = high - ((row + 0.5) / rows) * (high - low);
-    const band = bandOf(cuts, height);
-    const [r, g, b] = rgbOf(floorColour(band));
-    const dim = band === selected ? 1 : 0.62;
+    const rowBand = bandOf(cuts, height);
     for (let column = 0; column < columns; column++) {
       const value = pixels[row * columns + column] ?? 0;
       const at = (row * columns + column) * 4;
+      const own = byPixel ? (byPixel[row * columns + column] ?? 255) : rowBand;
+      const band = own === 255 ? -1 : own;
+      const [r, g, b] = band < 0 ? grey : palette[band % palette.length]!;
+      const dim = band === selected || (byPixel && band < 0) ? 1 : 0.62;
       let shade: [number, number, number];
       if (value >= 128) {
         const near = 0.55 + (0.45 * (value - 128)) / 127;
@@ -306,6 +323,117 @@ export function paintSection(
     }
   }
   return out;
+}
+
+/** Side-by-side slots for the overlapping places' brackets in a section: places seen at the same spot (across within
+ * `span` metres, heights overlapping) go in the next slot to the right, so that each stays pressable. Returns each
+ * place's slot, 0 first. */
+export function placeSlots(
+  places: readonly { across: number; low: number; high: number }[],
+  span: number,
+): number[] {
+  const slots = new Array<number>(places.length).fill(0);
+  const order = places.map((place, index) => ({ ...place, index }));
+  order.sort((a, b) => a.across - b.across);
+  const taken: ((typeof order)[number] & { slot: number })[] = [];
+  for (const here of order) {
+    let slot = 0;
+    while (
+      taken.some(
+        (other) =>
+          other.slot === slot &&
+          Math.abs(other.across - here.across) < span &&
+          other.low <= here.high &&
+          here.low <= other.high,
+      )
+    )
+      slot += 1;
+    slots[here.index] = slot;
+    taken.push({ ...here, slot });
+  }
+  return slots;
+}
+
+/** Where a pixel of a side view lies, as a fraction across and down: the floor drawn there (automatic passages), or
+ * none. */
+export function floorAtPixel(
+  pixelFloors: Uint8Array | null,
+  columns: number,
+  rows: number,
+  across: number,
+  down: number,
+): number | null {
+  if (!pixelFloors) return null;
+  const column = Math.min(columns - 1, Math.max(0, Math.floor(across * columns)));
+  const row = Math.min(rows - 1, Math.max(0, Math.floor(down * rows)));
+  // The floor drawn nearest the point, within a few pixels (floors are lines three pixels thick).
+  for (let reach = 0; reach <= 6; reach++) {
+    for (const dy of reach === 0 ? [0] : [-reach, reach]) {
+      const r = row + dy;
+      if (r < 0 || r >= rows) continue;
+      const value = pixelFloors[r * columns + column];
+      if (value !== undefined && value !== 255) return value;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Automatic passages: the player's Upper / Lower choices per overlapping place.
+
+/** The storey a place shows on the main floor: the player's choice there, else upper. */
+export function showOf(place: PassagePlace, choices: readonly PassageChoice[]): PassageShow {
+  return choices.find((choice) => choiceIsFor(choice, place))?.show ?? 'upper';
+}
+
+/** Whether a choice is for this place: it is at the place's point (the helper finds the place again by it). */
+function choiceIsFor(choice: PassageChoice, place: PassagePlace): boolean {
+  return Math.abs(choice.x - place.x) < 0.01 && Math.abs(choice.z - place.z) < 0.01;
+}
+
+/** The choices with this place's set to `show` (upper, the default, is not written). */
+export function setShow(
+  choices: readonly PassageChoice[],
+  place: PassagePlace,
+  show: PassageShow,
+): PassageChoice[] {
+  // A choice the helper matched to this place before (by its cells or a near point) is replaced too.
+  const rest = choices.filter(
+    (choice) =>
+      !choiceIsFor(choice, place) &&
+      !(place.set && choice.show === place.show && near(choice, place)),
+  );
+  return show === 'upper' ? rest : [...rest, { x: place.x, z: place.z, show }];
+}
+
+function near(choice: PassageChoice, place: PassagePlace): boolean {
+  return Math.hypot(choice.x - place.x, choice.z - place.z) <= Math.max(6, Math.sqrt(place.area));
+}
+
+/** The panel's starting choices for an area: those it was made with. */
+export function startChoices(area: MadeArea): PassageChoice[] {
+  return [...(area.floorPlan?.overrides?.passages ?? [])];
+}
+
+/** How the panel starts finding an area's floors: as it was made. */
+export function startMethod(area: MadeArea): FloorMethod {
+  return area.floorPlan?.method === 'passages' ? 'passages' : 'cuts';
+}
+
+/** The entry written to the player's floor cuts file for the floor method chosen in the panel. */
+export function methodEntry(
+  method: FloorMethod,
+  draft: FloorsDraft,
+  choices: readonly PassageChoice[],
+  floors: number,
+): FloorEntry {
+  if (method === 'cuts') return { method, ...entryOf(draft) };
+  const names = padNames(draft.names, floors).map((name) => name.trim());
+  return {
+    method,
+    passages: choices.map((choice) => ({ ...choice })),
+    ...(names.some((name) => name !== '') ? { names } : {}),
+  };
 }
 
 /** A marker's look in the views: 0 plain, 1 within `NEAR_CUT` of a cut, 2 on another floor than its height gives

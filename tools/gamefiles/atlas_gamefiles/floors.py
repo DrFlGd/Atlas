@@ -95,6 +95,11 @@ class FloorPlan:
     surfaces: Surfaces | None
     flipped: bool
     report: dict[str, tp.Any] = field(default_factory=dict)
+    method: str = "cuts"  # or "passages" (passages.py)
+    main: int = 0  # the floor markers off any walkable surface go on when there are no cuts
+    # Per floor, [lowest, highest] height of its walkable triangles: for passages, whose floors are not apart in
+    # height (the 3D map cuts each floor's model at its top).
+    heights: list[list[float]] | None = None
 
 
 def settings_from(config: dict[str, tp.Any] | None) -> dict[str, float]:
@@ -444,6 +449,7 @@ def plan_floors(
     walkable, walls, flipped, walk_index = prepared.walkable, prepared.walls, prepared.flipped, prepared.walk_index
     triangle_floor = np.full(len(triangles), -1, dtype=np.int32)
     report: dict[str, tp.Any] = {
+        "method": "cuts",
         "triangles": int(len(triangles)),
         "walkable": int(len(walk_index)),
         "walls": int(walls.sum()),
@@ -577,7 +583,7 @@ def locate(plan: FloorPlan, x: float, y: float, z: float) -> Placement:
             if below.any():
                 pick = near[below][np.argmax(heights[below])]
                 return Placement(int(surfaces.floor[pick]), True, float(surfaces.height[pick]), int(surfaces.triangle[pick]))
-    floor = int(np.searchsorted(cuts, y)) if len(cuts) else 0
+    floor = int(np.searchsorted(cuts, y)) if len(cuts) else plan.main
     return Placement(min(floor, max(len(plan.floors) - 1, 0)), False, None, None)
 
 

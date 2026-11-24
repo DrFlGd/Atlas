@@ -3267,6 +3267,15 @@
                           "sky": {
                             "type": "string",
                             "pattern": "^#[0-9a-f]{6}$"
+                          },
+                          "textures": {
+                            "type": "string",
+                            "enum": ["keep", "average"]
+                          },
+                          "textureSize": {
+                            "type": "integer",
+                            "minimum": 16,
+                            "maximum": 8192
                           }
                         },
                         "required": ["file"],

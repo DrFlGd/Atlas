@@ -15,6 +15,13 @@
 //! folder is cleared at the next start in any case, as every `.importing-`
 //! folder is (see `removal::finish_pending_deletes`).
 //!
+//! A model fetched from a site (`keepModel` in the request) is kept whole
+//! beside its build, and the save moves it into the game's saved pages, as
+//! `import/models/<folder>.glb` ([`kept_model_path`]), replacing the one
+//! kept before. "Build again from saved pages" then builds the map again
+//! from it ([`reuse_kept_model`]) without a download. It is never served
+//! to the view and never goes into a pack file, as nothing of `import/` is.
+//!
 //! In a build with downloads only. Android has no builder, so it builds
 //! nothing.
 
@@ -40,10 +47,16 @@ pub const MAX_MODEL_BYTES: u64 = 1 << 30;
 pub const MAX_PIECE_BYTES: u64 = 256 << 20;
 /// How long the request for one file may take, all of it.
 const TIMEOUT: Duration = Duration::from_secs(600);
-/// The raw model, as fetched or joined.
-const MODEL_FILE: &str = "model.glb";
+/// The raw model, as fetched, joined, or sent by the importer (`gamefolders.rs`).
+pub const MODEL_FILE: &str = "model.glb";
 /// The pieces' base64 text, joined in order, until the model is built.
 const PIECES_FILE: &str = "model.b64";
+/// The model being joined from its pieces, or copied from a kept one,
+/// until it is whole: renamed to [`MODEL_FILE`] only then.
+const MODEL_PART_FILE: &str = "model.glb.part";
+/// The folder of a game's saved pages (`import/`, `packs::IMPORT_DIR`)
+/// that keeps the original model of each of its 3D maps.
+pub const KEPT_MODELS_DIR: &str = "models";
 /// The pack folder of a build: `scene/<folder>/` and `tiles/<folder>/`.
 pub const BUILT_PACK: &str = "pack";
 
@@ -84,6 +97,52 @@ fn new_name() -> String {
 /// The folder of a build.
 pub fn build_dir(builds: &Path, name: &str) -> PathBuf {
     builds.join(name)
+}
+
+/// Where a game in `pack_dir` keeps the original model of its map built
+/// into `scene/<folder>/`: `import/models/<folder>.glb`.
+pub fn kept_model_path(pack_dir: &Path, folder: &str) -> PathBuf {
+    pack_dir
+        .join(crate::packs::IMPORT_DIR)
+        .join(KEPT_MODELS_DIR)
+        .join(format!("{folder}.glb"))
+}
+
+/// Makes a new build of the original model a game in `pack_dir` keeps for
+/// its map `folder`, to build it again without a download: its name, or
+/// `None` when no model is kept for that map. The kept model is linked, or
+/// copied where a link cannot be made, and stays as it is: only a save of
+/// the new build replaces it, and a discarded build leaves it alone.
+pub fn reuse_kept_model(
+    builds: &Path,
+    pack_dir: &Path,
+    folder: &str,
+) -> Result<Option<String>, String> {
+    if !is_folder_name(folder) {
+        return Err("The map's folder is not one this app takes.".to_owned());
+    }
+    let kept = kept_model_path(pack_dir, folder);
+    match std::fs::symlink_metadata(&kept) {
+        Ok(meta) if meta.is_file() && meta.len() <= MAX_MODEL_BYTES => {}
+        _ => return Ok(None),
+    }
+    let name = new_name();
+    let dir = build_dir(builds, &name);
+    let made = (|| {
+        std::fs::create_dir_all(&dir)?;
+        let part = dir.join(MODEL_PART_FILE);
+        if std::fs::hard_link(&kept, &part).is_err() {
+            std::fs::copy(&kept, &part)?;
+        }
+        std::fs::rename(&part, dir.join(MODEL_FILE))
+    })();
+    match made {
+        Ok(()) => Ok(Some(name)),
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            Err(format!("Could not read the kept model: {error}"))
+        }
+    }
 }
 
 /// One answer for a model or a piece, as the web app reads it.
@@ -282,6 +341,20 @@ pub struct BuildRequest {
     pub sky: Option<String>,
     #[serde(default)]
     pub floors: Vec<BuildFloor>,
+    /// `keep` keeps the model's textures (at their own size in the finest
+    /// level, smaller copies in coarser ones); anything else, or none,
+    /// keeps each texture's average colour.
+    #[serde(default)]
+    pub textures: Option<String>,
+    /// With `keep`: the longest side of a picture at the finest level, a
+    /// power of two; none keeps each picture's own size.
+    #[serde(default)]
+    pub texture_size: Option<u32>,
+    /// Keeps the original model in the build once it is built, for the
+    /// save to keep with the game (see [`kept_model_path`]). Otherwise it
+    /// is let go once built.
+    #[serde(default)]
+    pub keep_model: bool,
 }
 
 /// What building a kept model gave, as the web app reads it: the scene and
@@ -327,7 +400,14 @@ pub fn options_of(request: &BuildRequest) -> Result<atlas_scene::Options, String
     let mut options = serde_json::json!({
         "folder": format!("scene/{}", request.folder),
         "drop": request.drop,
-        "textures": { "mode": "average" },
+        "textures": if request.textures.as_deref() == Some("keep") {
+            match request.texture_size {
+                Some(size) => serde_json::json!({ "mode": "keep", "maxSize": size }),
+                None => serde_json::json!({ "mode": "keep" }),
+            }
+        } else {
+            serde_json::json!({ "mode": "average" })
+        },
         "render": {
             "folder": format!("tiles/{}", request.folder),
             "floors": if request.floors.len() >= 2 { serde_json::json!(request.floors) } else { serde_json::json!([]) },
@@ -353,8 +433,9 @@ pub fn options_of(request: &BuildRequest) -> Result<atlas_scene::Options, String
 }
 
 /// Builds the model kept in the build `name` (joining its pieces first)
-/// into the build's own pack folder, and lets the raw model go. A model
-/// the builder cannot read is not built.
+/// into the build's own pack folder. The raw model stays in the build when
+/// the request keeps it and the build succeeded, and is let go otherwise.
+/// A model the builder cannot read is not built.
 #[cfg(not(target_os = "android"))]
 pub fn build_scene(builds: &Path, name: &str, request: &BuildRequest) -> SceneBuilt {
     if !is_build_name(name) {
@@ -362,6 +443,7 @@ pub fn build_scene(builds: &Path, name: &str, request: &BuildRequest) -> SceneBu
     }
     let dir = build_dir(builds, name);
     let model = dir.join(MODEL_FILE);
+    let part = dir.join(MODEL_PART_FILE);
     let pieces = dir.join(PIECES_FILE);
     let done = (|| {
         let options = match options_of(request) {
@@ -374,7 +456,10 @@ pub fn build_scene(builds: &Path, name: &str, request: &BuildRequest) -> SceneBu
                 .and_then(|text| decode_base64(&text));
             match joined {
                 Ok(bytes) => {
-                    if let Err(error) = std::fs::write(&model, bytes) {
+                    // Whole or not at all: a model cut short is never left as one.
+                    let written =
+                        std::fs::write(&part, bytes).and_then(|()| std::fs::rename(&part, &model));
+                    if let Err(error) = written {
                         return SceneBuilt::problem(
                             "failed",
                             format!("Could not keep the model: {error}"),
@@ -421,7 +506,10 @@ pub fn build_scene(builds: &Path, name: &str, request: &BuildRequest) -> SceneBu
             }
         }
     })();
-    let _ = std::fs::remove_file(&model);
+    if !(done.ok && request.keep_model) {
+        let _ = std::fs::remove_file(&model);
+    }
+    let _ = std::fs::remove_file(&part);
     let _ = std::fs::remove_file(&pieces);
     done
 }
@@ -686,5 +774,92 @@ mod tests {
             discard(&builds, &[name.clone(), b.clone(), "../x".to_owned()]);
             assert!(!build_dir(&builds, &name).exists());
         }
+    }
+
+    /// A made-up game's folder that keeps `model` as the original model of `folder`.
+    #[cfg(not(target_os = "android"))]
+    fn game_keeping(dir: &Path, folder: &str, model: &[u8]) -> PathBuf {
+        let pack = dir.join("isles");
+        let kept = kept_model_path(&pack, folder);
+        std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        std::fs::write(&kept, model).unwrap();
+        pack
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn keeps_the_original_model_once_built_and_builds_again_from_the_kept_one() {
+        let dir = TempDir::new("scene-builds-kept");
+        let builds = dir.0.join(BUILDS_DIR);
+        let glb = square_glb();
+        // A model in pieces, kept whole once built, as the request asks.
+        let name = new_name();
+        std::fs::create_dir_all(build_dir(&builds, &name)).unwrap();
+        std::fs::write(build_dir(&builds, &name).join(PIECES_FILE), encode(&glb)).unwrap();
+        let keeping = BuildRequest {
+            folder: "east".into(),
+            textures: Some("keep".into()),
+            keep_model: true,
+            ..BuildRequest::default()
+        };
+        let built = build_scene(&builds, &name, &keeping);
+        assert!(built.ok, "{built:?}");
+        let files: Vec<_> = std::fs::read_dir(build_dir(&builds, &name))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        assert_eq!(files, [MODEL_FILE, BUILT_PACK]);
+        assert_eq!(
+            std::fs::read(build_dir(&builds, &name).join(MODEL_FILE)).unwrap(),
+            glb
+        );
+        // A model that is not built is never kept, even when asked.
+        let bad = new_name();
+        std::fs::create_dir_all(build_dir(&builds, &bad)).unwrap();
+        std::fs::write(build_dir(&builds, &bad).join(MODEL_FILE), b"not a model").unwrap();
+        assert!(!build_scene(&builds, &bad, &keeping).ok);
+        assert!(!build_dir(&builds, &bad).join(MODEL_FILE).exists());
+
+        // A game that keeps the model builds it again with no download, and keeps it as it was.
+        let pack = game_keeping(&dir.0, "east", &glb);
+        assert_eq!(reuse_kept_model(&builds, &pack, "west"), Ok(None));
+        assert!(reuse_kept_model(&builds, &pack, "../east").is_err());
+        let again = reuse_kept_model(&builds, &pack, "east").unwrap().unwrap();
+        assert!(is_build_name(&again));
+        let average = BuildRequest {
+            textures: Some("average".into()),
+            ..keeping.clone()
+        };
+        let built = build_scene(&builds, &again, &average);
+        assert!(built.ok, "{built:?}");
+        assert_eq!(built.triangles, 2);
+        assert!(build_dir(&builds, &again)
+            .join(BUILT_PACK)
+            .join("scene/east")
+            .is_dir());
+        // Thrown away, the build leaves the kept model alone.
+        discard(&builds, std::slice::from_ref(&again));
+        assert!(!build_dir(&builds, &again).exists());
+        assert_eq!(std::fs::read(kept_model_path(&pack, "east")).unwrap(), glb);
+        // So does a build again that fails.
+        let broken = game_keeping(&dir.0, "west", b"glTF but not a model");
+        let failing = reuse_kept_model(&builds, &broken, "west").unwrap().unwrap();
+        let west = BuildRequest {
+            folder: "west".into(),
+            ..keeping.clone()
+        };
+        assert_eq!(
+            build_scene(&builds, &failing, &west).problem.as_deref(),
+            Some("format")
+        );
+        assert_eq!(
+            std::fs::read(kept_model_path(&broken, "west")).unwrap(),
+            b"glTF but not a model"
+        );
+        discard(&builds, &[name, bad, failing]);
+        assert_eq!(std::fs::read_dir(&builds).unwrap().count(), 0);
     }
 }

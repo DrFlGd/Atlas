@@ -16,7 +16,7 @@ from pathlib import Path
 from .config import area_key
 from .content import GameContent, Lot, LotItem
 from .detect import descend, files_matching
-from .games import Area
+from .games import Area, GameProfile
 
 Vector = tuple[float, float, float]
 
@@ -111,6 +111,13 @@ def item_category(item: LotItem, content: GameContent, config: dict[str, tp.Any]
         return "armour"
     if item.kind == "ring":
         return "ring"
+    if item.kind == "gem":
+        category = rules.get("gemCategory", "upgrade")
+        return category if category in CATEGORIES else "other"
+    name = content.item_name(item.kind, item.id) or ""
+    for part, category in rules.get("nameRules", []):
+        if isinstance(part, str) and part and part.lower() in name.lower() and category in CATEGORIES:
+            return category
     found = ranged("goodsRanges")
     if found:
         return found
@@ -124,7 +131,7 @@ def item_category(item: LotItem, content: GameContent, config: dict[str, tp.Any]
 def item_name(item: LotItem, content: GameContent) -> str:
     name = content.item_name(item.kind, item.id)
     if not name:
-        name = f"Unknown {item.kind} {item.id}"
+        name = f"Blood gem or rune {item.id}" if item.kind == "gem" else f"Unknown {item.kind} {item.id}"
     return f"{name} ×{item.count}" if item.count > 1 else name
 
 
@@ -140,9 +147,15 @@ def lot_label(lot: Lot, content: GameContent, config: dict[str, tp.Any]) -> tupl
     return name, item_category(first, content, config)
 
 
-def read_bonfire_registrations(root: Path, area: Area) -> tuple[list[tuple[int, int]], dict[str, tp.Any]]:
+def read_bonfire_registrations(
+    root: Path, area: Area, emevd_class: type | None = None, lamps: dict[str, tp.Any] | None = None
+) -> tuple[list[tuple[int, int]], dict[str, tp.Any]]:
     """The bonfires an area's event script registers (`RegisterBonfire(flag, obj)`, instruction 2009:3), as
-    (flag, object entity id) pairs, also when the call is in an event run with arguments."""
+    (flag, object entity id) pairs, also when the call is in an event run with arguments.
+
+    With `lamps` (Bloodborne: the config's `bonfires`), also each run of the common event `commonEvent` (RunEvent,
+    2000:0, with that event id): its argument `objectArg` is the lamp object's entity id, and its argument `flagArg`
+    plus `flagAdd` the flag set when the lamp is lit."""
     folder = descend(root, "event")
     files = files_matching(folder, re.escape(area.id) + r"\.emevd(\.dcx)?")
     info: dict[str, tp.Any] = {"file": None}
@@ -151,9 +164,11 @@ def read_bonfire_registrations(root: Path, area: Area) -> tuple[list[tuple[int, 
         return [], info
     info["file"] = f"event/{files[0].name}"
     try:
-        from soulstruct.darksouls1r.events import EMEVD
+        if emevd_class is None:
+            from soulstruct.darksouls1r.events import EMEVD
 
-        emevd = EMEVD.from_path(files[0])
+            emevd_class = EMEVD
+        emevd = emevd_class.from_path(files[0])
     except Exception as error:
         info["error"] = f"{type(error).__name__}: {str(error).strip()[:200]}"
         return [], info
@@ -175,6 +190,21 @@ def read_bonfire_registrations(root: Path, area: Area) -> tuple[list[tuple[int, 
                 parametrized[int(event_id)].append((args[0], args[1], replaced.get(0), replaced.get(4)))
             else:
                 found.append((int(args[0]), int(args[1])))
+    common = lamps.get("commonEvent") if lamps else None
+    if isinstance(common, int):
+        object_arg = int(lamps.get("objectArg", 1))  # type: ignore[union-attr]
+        flag_arg = int(lamps.get("flagArg", 3))  # type: ignore[union-attr]
+        flag_add = int(lamps.get("flagAdd", 0))  # type: ignore[union-attr]
+        runs = 0
+        for event_id, call_args in calls:
+            if event_id != common:
+                continue
+            runs += 1
+            try:
+                found.append((int(call_args[flag_arg]) + flag_add, int(call_args[object_arg])))
+            except (IndexError, TypeError, ValueError):
+                continue
+        info["commonEventRuns"] = runs
     for event_id, call_args in calls:
         for flag, obj, flag_offset, obj_offset in parametrized.get(event_id, []):
             try:
@@ -196,9 +226,16 @@ def extract_area(
     content: GameContent,
     config: dict[str, tp.Any],
     bonfire_models: set[str] | None = None,
+    profile: GameProfile | None = None,
 ) -> AreaContent:
     """The markers of one area, and how its geometry is placed. `bonfire_models` collects the models of bonfire
-    objects confirmed by event scripts (for the fallback in areas without a usable script)."""
+    objects confirmed by event scripts (for the fallback in areas without a usable script).
+
+    The config can change what is kept, per game: `items.followLotChain` (a treasure's lot is followed by the lots
+    numbered right after it, while they exist: Bloodborne), `items.requireFlag` (lots without a "picked up" flag
+    are left out: they are not fixed pickups), `items.skipHidden` (treasure the game hides until an event shows it
+    is left out: scripted rewards), `characters.drops` (false: no enemy drops) and `bonfires` (how lamps are
+    registered, see read_bonfire_registrations)."""
     result = AreaContent()
     report = result.report
     key = area_key(area.id)
@@ -212,6 +249,7 @@ def extract_area(
     objects_by_entity: dict[int, tp.Any] = {}
     characters = []
     moved = 0
+    scaled = 0
     instances: dict[str, list[tuple[Vector, Vector]]] = defaultdict(list)
     part_names: dict[str, list[str]] = defaultdict(list)
     for part in parts:
@@ -234,6 +272,9 @@ def extract_area(
             )
             if any(abs(v) > 1e-4 for v in position + rotation):
                 moved += 1
+            scale = getattr(part, "scale", None)
+            if scale is not None and any(abs(v - 1.0) > 1e-3 for v in _vector(scale)):
+                scaled += 1
         elif kind == "Object":
             entity = int(getattr(part, "entity_id", -1) or -1)
             if entity > 0:
@@ -242,10 +283,13 @@ def extract_area(
             characters.append(part)
     result.instances = dict(instances)
     result.part_names = dict(part_names)
-    report["collisionParts"] = {"total": len(result.collisions), "movedOrTurned": moved}
+    report["collisionParts"] = {"total": len(result.collisions), "movedOrTurned": moved, "scaled": scaled}
 
-    # --- Bonfires
-    registrations, bonfire_info = read_bonfire_registrations(root, area)
+    # --- Bonfires (lamps in Bloodborne)
+    lamp_rules = config.get("bonfires") if isinstance(config.get("bonfires"), dict) else None
+    registrations, bonfire_info = read_bonfire_registrations(
+        root, area, profile.emevd_class() if profile is not None else None, lamp_rules
+    )
     names = config.get("bonfireNames", {})
     bonfires: list[tuple[tp.Any, int | None]] = []
     missing_objects = []
@@ -295,6 +339,11 @@ def extract_area(
     lots_missing: set[int] = set()
     lots_empty: set[int] = set()
     by_part_kind: Counter[str] = Counter()
+    item_rules = config.get("items", {}) if isinstance(config.get("items"), dict) else {}
+    follow_chain = int(item_rules.get("followLotChain", 0) or 0)
+    require_flag = bool(item_rules.get("requireFlag", False))
+    skip_hidden = bool(item_rules.get("skipHidden", False))
+    left_out: Counter[str] = Counter()
     treasures = list(getattr(msb, "treasures", []))
     for treasure in treasures:
         part = getattr(treasure, "treasure_part", None)
@@ -302,6 +351,9 @@ def extract_area(
             by_part_kind["none"] += 1
             continue
         by_part_kind[_kind(part)] += 1
+        if skip_hidden and getattr(treasure, "is_hidden", False):
+            left_out["hidden"] += 1
+            continue
         notes = []
         if getattr(treasure, "is_in_chest", False):
             notes.append("In a chest.")
@@ -317,8 +369,13 @@ def extract_area(
             if lot is None:
                 lots_missing.add(lot_id)
                 continue
+            if follow_chain:
+                lot = chained_lot(lot, content, follow_chain)
             if not lot.items:
                 lots_empty.add(lot_id)
+                continue
+            if require_flag and lot.flag <= 0:
+                left_out["noFlag"] += 1
                 continue
             name, category = lot_label(lot, content, config)
             result.markers.append(
@@ -341,10 +398,13 @@ def extract_area(
         "lotsFound": len(lots_referenced - lots_missing),
         "lotsEmpty": len(lots_empty),
         "lotsMissing": missing_lot_diagnosis(sorted(lots_missing), content),
+        "leftOut": dict(sorted(left_out.items())),
     }
 
     # --- Characters: bosses, NPCs and enemies with a one-time guaranteed drop
     ignore = set(config.get("characters", {}).get("ignoreModels", []))
+    drops = config.get("characters", {}).get("drops", True) is not False
+    models = profile.character_models() if profile is not None else None
     bosses_here = [b for b in config.get("bosses", []) if key in b.get("areas", [key])]
     boss_parts: dict[int, list[tp.Any]] = defaultdict(list)
     counts: Counter[str] = Counter()
@@ -366,14 +426,14 @@ def extract_area(
                     key=unique(f"{key}.{safe_key(part.name)}"),
                     kind="npc",
                     category="npc",
-                    name=content.npc_name(character_id) or model_name(_model(part)) or "Character",
+                    name=content.npc_name(character_id) or model_name(_model(part), models) or "Character",
                     position=_vector(part.translate),
                     part=part.name,
                 )
             )
             continue
         npc = content.npcs.get(character_id)
-        if npc is None:
+        if npc is None or not drops:
             counts["enemy"] += 1
             continue
         dropped = False
@@ -382,7 +442,7 @@ def extract_area(
             if lot is None or lot.flag <= 0 or not lot.guaranteed:
                 continue
             item, _ = lot_label(lot, content, config)
-            who = content.npc_name(character_id) or model_name(_model(part)) or "Enemy"
+            who = content.npc_name(character_id) or model_name(_model(part), models) or "Enemy"
             result.markers.append(
                 Marker(
                     key=unique(f"{key}.{safe_key(part.name)}.d{slot}"),
@@ -430,16 +490,36 @@ def extract_area(
     return result
 
 
-def model_name(model: str | None) -> str | None:
-    """A character model's name from Soulstruct's table (names only), e.g. `c2510` -> Undead Merchant."""
+def chained_lot(lot: Lot, content: GameContent, length: int) -> Lot:
+    """A lot with the lots numbered right after it (up to `length`, while they exist), as one: Bloodborne gives
+    every lot of such a chain at one pickup. The flag is the first one set along the chain."""
+    items = list(lot.items)
+    flag = lot.flag
+    for step in range(1, length + 1):
+        following = content.lots.get(lot.id + step)
+        if following is None:
+            break
+        items.extend(following.items)
+        if flag <= 0 and following.flag > 0:
+            flag = following.flag
+    if len(items) == len(lot.items) and flag == lot.flag:
+        return lot
+    return Lot(lot.id, tuple(items), flag, lot.nothing_chance)
+
+
+def model_name(model: str | None, models: dict[int, str] | None = None) -> str | None:
+    """A character model's name from Soulstruct's table (names only), e.g. `c2510` -> Undead Merchant. `models` is
+    the game's table (GameProfile.character_models); Dark Souls' without one."""
     number = _model_number(model)
     if number is None:
         return None
-    try:
-        from soulstruct.darksouls1ptde.constants import CHARACTER_MODELS
-    except Exception:  # pragma: no cover
-        return None
-    name = CHARACTER_MODELS.get(number)
+    if models is None:
+        try:
+            from soulstruct.darksouls1ptde.constants import CHARACTER_MODELS
+        except Exception:  # pragma: no cover
+            return None
+        models = dict(CHARACTER_MODELS)
+    name = models.get(number)
     if not isinstance(name, str):
         return None
     return re.sub(r"\s*\([^)]*\)$", "", name) or None
