@@ -273,20 +273,33 @@ test('the names of the areas float over the view, frame their area when pressed,
 
   // Pressed with the keyboard, a title shows its area: its name near the middle of the view.
   const caves = titles.filter({ hasText: 'Glimmer Caves' });
+  // Focusing the title can let the view report itself at rest before Enter starts the flight, so
+  // the old mark is cleared after focusing, and the title is read until the flight has brought it
+  // to the middle (a mark set just before the flight would otherwise be read mid-flight).
+  await caves.focus();
   await status.evaluate((element) => {
     delete (element as HTMLElement).dataset.onScreen;
   });
-  await caves.focus();
   await page.keyboard.press('Enter');
   await expect(status).toHaveAttribute('data-on-screen', /\[/, { timeout: 20_000 });
   const view = (await page.getByTestId('scene-view').boundingBox())!;
-  const title = (await caves.boundingBox())!;
-  expect(Math.abs(title.x + title.width / 2 - (view.x + view.width / 2))).toBeLessThan(
-    view.width * 0.15,
-  );
-  expect(Math.abs(title.y + title.height - (view.y + view.height / 2))).toBeLessThan(
-    view.height * 0.15,
-  );
+  let seen = '';
+  await expect
+    .poll(
+      async () => {
+        const title = (await caves.boundingBox())!;
+        seen = JSON.stringify({ view, title, at: await status.getAttribute('data-on-screen') });
+        return Math.max(
+          Math.abs(title.x + title.width / 2 - (view.x + view.width / 2)) / view.width,
+          Math.abs(title.y + title.height - (view.y + view.height / 2)) / view.height,
+        );
+      },
+      { timeout: 10_000, message: 'the title in the middle of the view' },
+    )
+    .toBeLessThan(0.15)
+    .catch((error: unknown) => {
+      throw new Error(`${String(error)}\nLast seen: ${seen.slice(0, 600)}`);
+    });
 
   // Hidden from the view's tools, and kept so on the device.
   const toggle = page.getByTestId('scene-titles-toggle');
