@@ -1,5 +1,6 @@
 import { useId, useState } from 'react';
 import {
+  cutOf,
   floorColoursReason,
   floorsOfMap,
   pickFloor,
@@ -70,7 +71,7 @@ export function SceneTools() {
   const mapId = useAtlas((s) => s.mapId);
   const layerId = useAtlas((s) => s.layerId);
   const allFloors = useScene3d((s) => s.allFloors);
-  const cut = useScene3d((s) => s.cut);
+  const cut = useScene3d((s) => cutOf(s, mapId));
   const towardCamera = useScene3d((s) => s.cutTowardCamera);
   const focus = useScene3d((s) => s.focus);
   const titles = useScene3d((s) => s.titles);
@@ -209,7 +210,7 @@ export function SceneTools() {
                 data-testid="scene-cut-above"
                 onChange={(event) => {
                   const value = Number(event.target.value);
-                  setCut(value >= heights[1] ? null : value);
+                  setCut(value >= heights[1] ? null : value, mapId);
                 }}
               />
             </label>

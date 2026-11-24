@@ -2,6 +2,7 @@ import { ChecklistIndex, ProgressCounter, SearchIndex, indexPack } from '@atlas/
 import { makeFixturePack } from '@atlas/schema/testing';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  cutOf,
   floorColoursReason,
   floorStep,
   floorsOfMap,
@@ -128,7 +129,7 @@ describe('maps with a model', () => {
         requestSceneView('recenter');
       },
       () => {
-        setCut(3);
+        setCut(3, 'demo:map:world');
       },
     ]) {
       focusLocation(id, 'demo:layer:cellar', -2);
@@ -140,6 +141,16 @@ describe('maps with a model', () => {
     useScene3d.setState({ allFloors: true });
     focusLocation(id, null, 4);
     expect(useScene3d.getState()).toMatchObject({ allFloors: true, focus: { id, cut: 4 } });
+  });
+
+  it('keeps a free cut to the map it was set on', () => {
+    setCut(1477, 'demo:map:world');
+    expect(cutOf(useScene3d.getState(), 'demo:map:world')).toBe(1477);
+    // Another map, at heights of its own, is not cut away by it.
+    expect(cutOf(useScene3d.getState(), 'demo:map:other')).toBeNull();
+    expect(cutOf(useScene3d.getState(), null)).toBeNull();
+    setCut(null, 'demo:map:world');
+    expect(cutOf(useScene3d.getState(), 'demo:map:world')).toBeNull();
   });
 
   it('stays in 2D on a device that cannot show the 3D view', () => {
