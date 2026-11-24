@@ -8,8 +8,9 @@ item lot, text and coordinate here is invented, and the meshes are a few triangl
 What Soulstruct 2.6.0 cannot write is noted where it matters:
 - map piece models (FLVER): no writer for a minimal model, so the fixture holds a file that is not a FLVER (the
   reader's failure path); the success path is tested with a mock in test_geometry.py;
-- Bloodborne MSB files: Soulstruct's Bloodborne MSB writer leaves part offsets unfilled, so the fixture's
-  `.msb.dcx` files are Dark Souls Remastered MSBs, and the tests read them with the Dark Souls class (a mock);
+- Bloodborne MSB files: Soulstruct's Bloodborne MSB writer leaves each part's instance index unfilled and some
+  byte defaults out of range, so make_bloodborne_msb fills those in while writing. It then puts small values in
+  bytes Soulstruct expects blank, as real Bloodborne files have (the reader reads past them, see msb.load_msb);
 - Bloodborne collision and navmesh (Havok 2014 hknp meshes, hkaiNavMesh) and the navmesh placement table (.nva):
   Soulstruct does not write them, so havok_fixtures.py writes them byte by byte, holding made-up triangles.
 """
@@ -17,6 +18,7 @@ What Soulstruct 2.6.0 cannot write is noted where it matters:
 from __future__ import annotations
 
 import math
+import typing as tp
 import struct
 import sys
 from pathlib import Path
@@ -91,6 +93,94 @@ def make_msb(stem: str, *, with_geometry_parts: bool, collision: str = "h0000B1"
         )
         msb.navmeshes.new(name=navmesh, model=msb.auto_navmesh_model(navmesh, stem))
     return msb
+
+
+# Markers the Bloodborne MSB builder writes into fields next to bytes Soulstruct expects blank, to find those bytes.
+_GPARAM_MARK = 0x7A7A7A01
+_SCENE_GPARAM_MARK = 0x6B6B6B01
+
+
+def make_bloodborne_msb(stem: str, *, collision: str, navmesh: str) -> bytes:
+    """make_msb's layout as a Bloodborne MSB (Soulstruct's Bloodborne class), with what real files hold in bytes
+    Soulstruct expects blank: small values after the GParam and SceneGParam fields. Its entries after the first
+    with an absent data block (the "other" event here) are turned down by Soulstruct's check of absent blocks, which
+    measures their offset from the start of the file rather than from the entry."""
+    import soulstruct.bloodborne.maps.models as bb_models
+    import soulstruct.bloodborne.maps.parts as bb_parts
+    from soulstruct.bloodborne.maps import MSB as BloodborneMSB
+
+    msb = BloodborneMSB()
+    area, block = int(stem[1:3]), int(stem[4:6])
+    base = area * 100000 + block * 10000
+    def model(kind: str, name: str, stem: str = "") -> tp.Any:
+        made = getattr(bb_models, f"MSB{kind}Model")(name=name)
+        if stem:
+            made.set_auto_sib_path(stem)
+        getattr(msb, f"{kind[0].lower()}{''.join('_' + c.lower() if c.isupper() else c for c in kind[1:])}_models").append(made)
+        return made
+
+    part = {"part_unk_x0e_x0f": 0}  # Soulstruct's default (-1) does not fit the byte it is written to
+    chest = msb.objects.new(name="o0500_0000", model=model("Object", "o0500"), translate=Vector3((12.0, 1.0, -8.0)), **part)
+    lamp = msb.objects.new(
+        name="o0510_0000", model=model("Object", "o0510"), translate=Vector3((-20.0, 0.5, 15.0)), entity_id=base + 1960, **part
+    )
+    character = model("Character", "c2800")
+    msb.characters.new(name="c2800_0000", model=character, translate=Vector3((30.0, 2.0, 25.0)), **part)
+    msb.characters.new(name="c2800_0001", model=character, translate=Vector3((-35.0, 4.0, -30.0)), **part)
+    msb.player_starts.new(name="c0000_0000", model=model("Player", "c0000"), translate=Vector3((0.0, 0.0, 40.0)), **part)
+    msb.treasures.new(name="Treasure chest", treasure_part=chest, item_lot_1=ITEM_LOTS[0], item_lot_2=ITEM_LOTS[1])
+    msb.treasures.new(name="Treasure corpse", treasure_part=lamp, item_lot_1=ITEM_LOTS[2], item_lot_2=9999999)
+    msb.map_pieces.new(
+        name="m0000B1",
+        model=model("MapPiece", "m0000B1", stem),
+        environment_map_id=_GPARAM_MARK,
+        **part,
+    )
+    msb.collisions.new(
+        name=collision,
+        model=model("Collision", collision, stem),
+        translate=Vector3((5.0, 0.0, 0.0)),
+        rotate=Vector3((0.0, 90.0, 0.0)),
+        attached_lantern=base + 950,
+        sg_unk_x14_x18=_SCENE_GPARAM_MARK,
+        unk_x0b_x0c=0,  # Soulstruct's default here is not a number
+        event_ids=[0, 0, 0, 0],
+        **part,
+    )
+    msb.navmeshes.new(name=navmesh, model=model("Navmesh", navmesh, stem), **part)
+    msb.other_events.new(name="Other event")
+
+    msb.dcx_type = DCXType.Null  # plain bytes here; write_dcx compresses them
+    header = bb_parts.PartHeaderStruct
+    original = header.__dict__["preprocess_write_kwargs"]
+
+    def preprocess_write_kwargs(cls, entry, entry_lists, kwargs) -> None:
+        original.__func__(cls, entry, entry_lists, kwargs)
+        kwargs["instance_index"] = 0  # left unfilled by Soulstruct's writer
+
+    header.preprocess_write_kwargs = classmethod(preprocess_write_kwargs)
+    try:
+        data = bytearray(msb.to_bytes())
+    finally:
+        header.preprocess_write_kwargs = original
+
+    def after(mark: bytes) -> int:
+        assert data.count(mark) == 1, (mark, data.count(mark))
+        return data.index(mark) + len(mark)
+
+    # GParam: four ints, then 16 blank bytes; real files hold two ints in the last eight.
+    at = after(struct.pack("<i", _GPARAM_MARK))
+    data[at + 8 : at + 16] = struct.pack("<ii", 4988, 4942)
+    # SceneGParam: six ints, then 36 blank bytes; real files start them with 01 01 01.
+    at = after(struct.pack("<i", _SCENE_GPARAM_MARK))
+    data[at : at + 3] = b"\x01\x01\x01"
+    return bytes(data)
+
+
+def write_dcx(path: Path, data: bytes) -> None:
+    from soulstruct.dcx import compress
+
+    path.write_bytes(compress(data, DCXType.DCX_DFLT_10000_44_9))
 
 
 def collision_model(name: str) -> MapCollisionModel:
@@ -269,9 +359,7 @@ def make_bloodborne(root: Path) -> Path:
     data = root / "dvdroot_ps4"
     studio = data / "map" / "MapStudio"
     studio.mkdir(parents=True)
-    msb = make_msb(CATHEDRAL_WARD, with_geometry_parts=True, collision="h000100", navmesh="n000100")
-    msb.dcx_type = DCXType.DCX_DFLT_10000_44_9
-    msb.write(studio / f"{CATHEDRAL_WARD}.msb.dcx")
+    write_dcx(studio / f"{CATHEDRAL_WARD}.msb.dcx", make_bloodborne_msb(CATHEDRAL_WARD, collision="h000100", navmesh="n000100"))
     ward = data / "map" / CATHEDRAL_WARD
     ward.mkdir(parents=True)
     name = "h" + CATHEDRAL_WARD[1:]

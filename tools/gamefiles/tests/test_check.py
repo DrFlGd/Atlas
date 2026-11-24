@@ -128,15 +128,11 @@ def test_only_some_areas(dsr_folder: Path, tmp_path: Path) -> None:
     assert report["warnings"] == []
 
 
-def test_bloodborne_report(bloodborne_folder: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A mock, because Soulstruct cannot write Bloodborne MSBs (see fixtures.py): the made-up `.msb.dcx` is read with
-    the Dark Souls class. The collision and navmesh are made-up Havok 2014 files, read by our own decoder."""
-    from soulstruct.darksouls1r.maps import MSB as DarkSoulsMSB
-
-    monkeypatch.setattr(type(PROFILES["bloodborne"]), "msb_class", lambda self: DarkSoulsMSB)
-
+def test_bloodborne_report(bloodborne_folder: Path, tmp_path: Path) -> None:
+    """The made-up `.msb.dcx` is a Bloodborne MSB with what real ones hold where Soulstruct expects nothing (see
+    fixtures.py), read with relaxed checks. The collision and navmesh are made-up Havok 2014 files, read by our own
+    decoder."""
     before = snapshot(bloodborne_folder)
-    # The mock does not reach a child process, so the geometry is read in this one.
     report, _ = run(bloodborne_folder, tmp_path / "out", runner=InlineRunner())
     assert snapshot(bloodborne_folder) == before
 
