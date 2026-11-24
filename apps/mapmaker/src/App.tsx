@@ -30,9 +30,11 @@ import {
   suggestedFileName,
   summaryLine,
   FLOOR_METHODS,
+  LOOKS_3D,
   type AreaReport,
   type FloorMethod,
   type GeometrySourceName,
+  type Look3d,
   type MadeArea,
   type MakeReport,
   type MapStyleId,
@@ -83,6 +85,7 @@ function MapMaker() {
   const [problem, setProblem] = useState<string | null>(null);
   const [saved, setSaved] = useState<SavedReport | null>(null);
   const [make3d, setMake3d] = useState(true);
+  const [look3d, setLook3d] = useState<Look3d>('models');
   const [mapStyle, setMapStyle] = useState<MapStyleId>('shaded');
   const [floorMethod, setFloorMethod] = useState<FloorMethod | null>(null);
   const [overrides, setOverrides] = useState<FloorOverrides>({});
@@ -95,6 +98,7 @@ function MapMaker() {
         setInfo(appInfo);
         setFolder((current) => current ?? appInfo.lastFolder);
         setMake3d(appInfo.make3d);
+        setLook3d(appInfo.look3d);
         setMapStyle(appInfo.mapStyle);
         setFloorMethod(appInfo.floorMethod);
       },
@@ -142,14 +146,14 @@ function MapMaker() {
       try {
         setStatus(
           await (kind === 'make'
-            ? api.makeStart(folder, make3d, mapStyle, floorMethod)
+            ? api.makeStart(folder, make3d, mapStyle, floorMethod, look3d)
             : api.checkStart(folder)),
         );
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, folder, make3d, mapStyle, floorMethod],
+    [api, folder, make3d, mapStyle, floorMethod, look3d],
   );
 
   const cancel = useCallback(async () => {
@@ -180,12 +184,12 @@ function MapMaker() {
       setProblem(null);
       setSaved(null);
       try {
-        setStatus(await api.remakeStart(area, make3d, style));
+        setStatus(await api.remakeStart(area, make3d, style, look3d));
       } catch (error) {
         setProblem(errorText(error));
       }
     },
-    [api, make3d],
+    [api, make3d, look3d],
   );
 
   const redraw = useCallback(
@@ -313,6 +317,29 @@ function MapMaker() {
           />
           Also make 3D maps
         </label>
+        <div className="mm-style">
+          <label htmlFor="look-3d">3D look</label>
+          <select
+            id="look-3d"
+            value={look3d}
+            disabled={running || !make3d}
+            aria-describedby="look-3d-note"
+            onChange={(event) => {
+              setLook3d(event.target.value === 'collision' ? 'collision' : 'models');
+            }}
+          >
+            {LOOKS_3D.map((look) => (
+              <option key={look.id} value={look.id}>
+                {look.label}
+              </option>
+            ))}
+          </select>
+          <span id="look-3d-note" className="small muted">
+            Game models makes each 3D map from the game’s own models, with every texture at its own
+            size up close; an area whose models cannot be read is made from its collision, and its
+            report says so. Collision makes it from the ground and walls, coloured as the map.
+          </span>
+        </div>
         <MapStyleChoice
           id="map-style"
           label="Map style"
@@ -349,9 +376,9 @@ function MapMaker() {
         <p className="muted small">
           Make map reads every area (a few minutes for Dark Souls Remastered) and puts the map pack
           in <span className="mono">{info?.mapsFolder ?? 'the Atlas maps folder'}</span>, replacing
-          one it made before. With 3D maps, each area also gets a 3D model of its ground and walls,
-          in the same colours as its map, which Atlas shows with its 2D | 3D switch; it takes a
-          little longer. Check game files only reports what can be read.
+          one it made before. With 3D maps, each area also gets a 3D model, which Atlas shows with
+          its 2D | 3D switch; it takes a little longer, and longer still with the game’s models and
+          textures. Check game files only reports what can be read.
         </p>
         {make3d && info && !info.sceneBuilderFound && (
           <p className="mm-alert" role="status">

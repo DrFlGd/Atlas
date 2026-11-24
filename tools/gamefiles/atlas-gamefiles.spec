@@ -28,7 +28,10 @@ hidden = [
     *collect_submodules("soulstruct.havok.types.hk2014"),
     *collect_submodules("soulstruct.havok.types.hk2015"),
     "soulstruct.havok.fromsoft.shared.map_collision",
-    "soulstruct.flver",
+    # The game's own models (models.py): FLVER models, their materials (MTD) and textures (TPF).
+    *collect_submodules("soulstruct.flver"),
+    "soulstruct.base.models.mtd",
+    "soulstruct.containers.tpf",
     "soulstruct.darksouls1r.events",
     # Bloodborne: its event scripts (lamps), character and map names, read lazily (games.py).
     "soulstruct.bloodborne.events",
@@ -44,6 +47,8 @@ hidden = [
     "PIL.ImageFilter",
     "PIL.WebPImagePlugin",
     "PIL.PngImagePlugin",
+    # The game's textures (DDS, dds.py).
+    "PIL.DdsImagePlugin",
 ]
 
 excluded = [

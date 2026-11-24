@@ -5,7 +5,7 @@
                     [--source-budget S] [--source-time-limit S] [--heartbeat S]
     atlas-gamefiles make <game folder> --out <output folder> [--maps-folder <folder>] [--stdin-cancel] [--areas ...]
                     [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
-                    [--no-3d] [--scene-builder <atlas-scene program>]
+                    [--no-3d] [--look-3d models|collision] [--scene-builder <atlas-scene program>]
     atlas-gamefiles make-model <model file> --out <output folder> [--maps-folder <folder>] [--stdin-cancel]
                     [--name <name>] [--title <title>] [--up +y|+z|-y|-z|+x|-x] [--scale <metres per unit>]
                     [--textures keep|plain] [--double-sided auto|yes|no] [--floors ground|passages|none]
@@ -132,8 +132,16 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         metavar="STYLE",
         help="how the floors are drawn: shaded (by height, the default), outlines (by height, with the walls and "
-        "the edges of the walkable floor as clear lines) or floors (each floor in its own colour, shaded by height "
-        "within it); textured and textured-outlines are not available yet",
+        "the edges of the walkable floor as clear lines), floors (each floor in its own colour, shaded by height "
+        "within it), textured (from the game's own models and textures) or textured-outlines (the same, with the "
+        "outlines); an area whose models cannot be read is drawn by height",
+    )
+    make.add_argument(
+        "--look-3d",
+        default=None,
+        choices=("models", "collision"),
+        help="what the 3D maps show: models (the game's own models with their textures, the default; an area whose "
+        "models cannot be read gets its collision) or collision (the ground and walls, coloured by height)",
     )
     make.add_argument(
         "--floor-method",
@@ -305,6 +313,7 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             remake=args.remake,
             style=args.map_style,
             floor_method=args.floor_method,
+            look_3d=args.look_3d,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
