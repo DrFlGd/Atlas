@@ -232,6 +232,9 @@ pub struct Report {
     pub texture_bytes: u64,
     /// The pictures of each cell's file at each level (textures `keep`).
     pub cell_textures: Vec<CellTextures>,
+    /// The cells were made smaller than the triangles alone ask, so that
+    /// each holds fewer pictures (textures `keep`, `cellBytes`).
+    pub cells_smaller_for_textures: bool,
     /// Primitives that are not triangles.
     pub primitives_skipped: usize,
     pub warnings: Vec<String>,
@@ -604,6 +607,71 @@ fn position_bytes(positions: &[[f32; 3]]) -> Vec<u8> {
         .collect()
 }
 
+/// The side of cells (at most `side`) whose finest files each hold at most
+/// `textures.cellBytes` of pictures (each picture counted once a cell, at
+/// its own bytes): `side` made smaller step by step, never below
+/// [`textures::MIN_TEXTURED_CELL`] nor into more than [`check::MAX_CELLS`]
+/// cells.
+fn fit_cells_to_pictures(
+    model: &Model,
+    welded: &Welded,
+    world: &[[f64; 3]],
+    low: [f64; 3],
+    side: f64,
+    options: &Options,
+    grid: &dyn Fn(f64) -> (usize, usize),
+) -> f64 {
+    let budget = options
+        .textures
+        .cell_bytes
+        .unwrap_or(LARGE_CELL_TEXTURES)
+        .max(1);
+    let pictures: Vec<Option<(usize, u64)>> = model
+        .materials
+        .iter()
+        .map(|m| {
+            m.texture.map(|t| {
+                (
+                    t.image,
+                    model.images.get(t.image).map_or(0, |b| b.len() as u64),
+                )
+            })
+        })
+        .collect();
+    let centres: Vec<[f64; 2]> = welded
+        .triangles
+        .iter()
+        .map(|t| [0, 1].map(|k| t.iter().map(|&v| world[v as usize][k]).sum::<f64>() / 3.0))
+        .collect();
+    let heaviest = |side: f64| -> u64 {
+        let (columns, rows) = grid(side);
+        let mut seen: HashSet<(usize, usize)> = HashSet::new();
+        let mut bytes: HashMap<usize, u64> = HashMap::new();
+        for (t, centre) in centres.iter().enumerate() {
+            let Some(Some((image, size))) = pictures.get(welded.materials[t] as usize) else {
+                continue;
+            };
+            let cx = (((centre[0] - low[0]) / side).floor().max(0.0) as usize).min(columns - 1);
+            let cy = (((centre[1] - low[1]) / side).floor().max(0.0) as usize).min(rows - 1);
+            let cell = cy * columns + cx;
+            if seen.insert((cell, *image)) {
+                *bytes.entry(cell).or_default() += size;
+            }
+        }
+        bytes.values().copied().max().unwrap_or(0)
+    };
+    let mut side = side;
+    while side > textures::MIN_TEXTURED_CELL && heaviest(side) > budget {
+        let next = (side * 0.7).max(textures::MIN_TEXTURED_CELL);
+        let (columns, rows) = grid(next);
+        if columns * rows > check::MAX_CELLS {
+            break;
+        }
+        side = next;
+    }
+    side
+}
+
 /// Builds the model into the pack folder `pack`; see the crate's description.
 pub fn build(
     model: &Model,
@@ -738,6 +806,11 @@ pub fn build(
             (((high[1] - low[1]) / side).floor() as usize + 1).max(1),
         )
     };
+    if keeping && options.cell_size.is_none() {
+        let fitted = fit_cells_to_pictures(model, &welded, &world, low, side, options, &grid);
+        report.cells_smaller_for_textures = fitted < side;
+        side = fitted;
+    }
     while grid(side).0 * grid(side).1 > check::MAX_CELLS {
         side *= 1.25;
     }

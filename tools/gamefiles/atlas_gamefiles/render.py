@@ -13,10 +13,11 @@ above this floor.
 
 The map style (`MAP_STYLES`) chooses how: "Height shaded" as above; "Height shaded with outlines" draws the
 collision boundaries (the walls and the edges of the walkable floor) as clear light lines. The textured styles
-need the game's textures, which are not read yet: for game files they are listed, and refused, so that the windows
-can show them. A map made from a 3D model can be drawn in them (`map_style(…, model=True)`): each floor is drawn in
-the model's own colours and textures by the 3D builder (`atlas-scene draw`) and given here as the floor's picture
-(`draw_layer`'s `fill`), with the rim, walls and outlines drawn over it as for the other styles.
+draw each floor in its own colours and textures: the 3D builder (`atlas-scene draw`) draws it from above and gives
+it here as the floor's picture (`draw_layer`'s `fill`), with the rim, walls and outlines drawn over it as for the
+other styles. A map made from a 3D model is drawn from the model; a game area from the game's own models
+(models.py, textured.py). An area whose models cannot be read is drawn height shaded (with outlines for "Textured
+with outlines", `fallback_style`), and its report says so.
 
 Seen from above: right is +x and up is +z, so a world point (x, z) is at pixel ((x - xMin) * s, (zMax - z) * s)
 for `s` pixels per metre, and the map's `worldTransform` is the inverse (pixel to world x, z).
@@ -43,7 +44,7 @@ RAMP = (
 )
 LIGHT = np.array([-0.45, 0.8, 0.4])  # from the north-west (-x, +z) and above
 OUTLINE = (246, 236, 200)  # the outlines of "Height shaded with outlines": light, over a dark edge
-TEXTURES_NOTE = "Needs the game's textures, which Map Maker does not read yet"
+TEXTURES_NOTE = "Drawn from the models' own textures; a game area whose models cannot be read is height shaded"
 
 
 @dataclass(frozen=True)
@@ -61,21 +62,18 @@ MAP_STYLES = {
     for style in (
         MapStyle("shaded", "Height shaded", outlines=False, textured=False, available=True),
         MapStyle("outlines", "Height shaded with outlines", outlines=True, textured=False, available=True),
-        MapStyle("textured", "Textured", outlines=False, textured=True, available=False, note=TEXTURES_NOTE),
-        MapStyle("textured-outlines", "Textured with outlines", outlines=True, textured=True, available=False, note=TEXTURES_NOTE),
+        MapStyle("textured", "Textured", outlines=False, textured=True, available=True, note=TEXTURES_NOTE),
+        MapStyle("textured-outlines", "Textured with outlines", outlines=True, textured=True, available=True, note=TEXTURES_NOTE),
     )
 }
 DEFAULT_STYLE = "shaded"
 
 
-def map_style(name: str | None, model: bool = False) -> MapStyle:
-    """The style called `name` (the default without one); ValueError for an unknown one or one not available. With
-    `model` (a map made from a 3D model), the textured styles are available too."""
+def map_style(name: str | None) -> MapStyle:
+    """The style called `name` (the default without one); ValueError for an unknown one or one not available."""
     style = MAP_STYLES.get(name or DEFAULT_STYLE)
     if style is None:
         raise ValueError(f"there is no map style {name!r}; the styles are {', '.join(MAP_STYLES)}")
-    if model and style.textured:
-        return MapStyle(style.id, style.label, style.outlines, True, True)
     if not style.available:
         raise ValueError(f"the map style {style.label!r} is not available: {style.note}")
     return style
@@ -225,6 +223,11 @@ def draw_layer(
             for (x0, y0), (x1, y1) in ends:
                 draw.line([(x0, y0), (x1, y1)], fill=WALL + (255,), width=width)
     return layer
+
+
+def fallback_style(style: MapStyle) -> MapStyle:
+    """The untextured style a textured one falls back to: with outlines or without, as it has them."""
+    return MAP_STYLES["outlines" if style.outlines else "shaded"] if style.textured else style
 
 
 def compose(frame: Frame, layers: tp.Iterable[tuple[int, tp.Any]], opacity: float) -> tp.Iterator[tuple[int, tp.Any]]:

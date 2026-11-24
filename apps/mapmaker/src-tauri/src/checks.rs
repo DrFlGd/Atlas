@@ -67,6 +67,8 @@ pub enum Job {
     Make {
         maps_folder: PathBuf,
         three_d: bool,
+        /// What the 3D maps are made from (settings::LOOKS_3D): `models` or `collision`.
+        look_3d: String,
         scene_builder: Option<PathBuf>,
         /// The player's own floor cuts (overrides.rs), when there is such a file.
         floor_overrides: Option<PathBuf>,
@@ -79,6 +81,7 @@ pub enum Job {
     Remake {
         maps_folder: PathBuf,
         three_d: bool,
+        look_3d: String,
         scene_builder: Option<PathBuf>,
         floor_overrides: Option<PathBuf>,
         map_style: String,
@@ -655,6 +658,7 @@ impl Checks {
         if let Job::Make {
             maps_folder,
             three_d,
+            look_3d,
             scene_builder,
             floor_overrides,
             map_style,
@@ -663,6 +667,7 @@ impl Checks {
         | Job::Remake {
             maps_folder,
             three_d,
+            look_3d,
             scene_builder,
             floor_overrides,
             map_style,
@@ -677,8 +682,11 @@ impl Checks {
                 }
                 (true, Some(builder)) => {
                     command.arg("--scene-builder").arg(builder);
+                    command.arg("--look-3d").arg(look_3d);
                 }
-                (true, None) => {}
+                (true, None) => {
+                    command.arg("--look-3d").arg(look_3d);
+                }
             }
             if let Some(file) = floor_overrides {
                 command.arg("--floor-overrides").arg(file);
@@ -984,6 +992,7 @@ impl Checks {
                 None => Job::Make {
                     maps_folder: maps_folder.to_path_buf(),
                     three_d: true,
+                    look_3d: "models".into(),
                     scene_builder: None,
                     floor_overrides: None,
                     map_style: "shaded".into(),
@@ -1293,6 +1302,7 @@ mod tests {
                 Job::Make {
                     maps_folder: base.join("Maps"),
                     three_d: true,
+                    look_3d: "models".into(),
                     scene_builder: None,
                     floor_overrides: None,
                     map_style: "shaded".into(),
@@ -1408,8 +1418,8 @@ mod tests {
         fs::create_dir_all(&game).unwrap();
         fs::create_dir_all(&out).unwrap();
         let script = base.join("helper.sh");
-        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice (--scene-builder and
-        // the builder, or --no-3d) and the map style. The script writes down what it was given after the maps folder.
+        // $1 make, $2 game, $3 --out, $4 out, $5 --maps-folder, $6 maps, then the 3D choice (--scene-builder, the
+        // builder and the 3D look, or --no-3d) and the map style. The script writes down what it was given after the maps folder.
         fs::write(
             &script,
             r#"#!/bin/sh
@@ -1433,6 +1443,7 @@ echo '{"event":"done"}'
                     Job::Make {
                         maps_folder: maps.clone(),
                         three_d,
+                        look_3d: "collision".into(),
                         scene_builder,
                         floor_overrides: None,
                         map_style: "shaded".into(),
@@ -1461,7 +1472,7 @@ echo '{"event":"done"}'
         let given = |out: &Path| fs::read_to_string(out.join("three-d.txt")).unwrap();
         assert_eq!(
             given(&out).trim(),
-            "--scene-builder /builder --map-style shaded --stdin-cancel"
+            "--scene-builder /builder --look-3d collision --map-style shaded --stdin-cancel"
         );
         let flat = base.join("out-flat");
         assert_eq!(
@@ -1552,6 +1563,7 @@ echo '{"event":"done"}'
             let job = Job::Remake {
                 maps_folder: maps.clone(),
                 three_d: false,
+                look_3d: "models".into(),
                 scene_builder: None,
                 floor_overrides: Some(base.join("floor-overrides.json")),
                 map_style: "shaded".into(),
@@ -1605,6 +1617,7 @@ echo '{"event":"done"}'
         let job = Job::Remake {
             maps_folder: maps.clone(),
             three_d: false,
+            look_3d: "models".into(),
             scene_builder: None,
             floor_overrides: None,
             map_style: "shaded".into(),

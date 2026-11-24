@@ -13,6 +13,12 @@ with the Map Maker, next to this helper. For each area this module:
    compressed, into the pack's `scene/<area>/` folder, and checked;
 3. returns the scene for the map's entry in `maps.json`, with the builder's report.
 
+With the 3D look "Game models" (models.py), the raw file holds the game's own models instead
+(`write_textured_glb`): one node per map piece part, one primitive per material, texture coordinates, and each
+texture's picture once at its own size; the builder keeps the textures (`textures.mode` `keep`: each at its own size
+at the finest level, halved for the coarser ones). The same file is what `atlas-scene draw` draws the textured map
+styles' floors from (textured.py).
+
 Nothing here reads game files; the triangles come from the file reader like those of the flat map. The raw file is
 deleted once the builder is done.
 """
@@ -155,6 +161,151 @@ def raw_glb(triangles: np.ndarray, colours: np.ndarray, owners: np.ndarray, owne
     )
 
 
+def textured_order(mesh: tp.Any) -> np.ndarray:
+    """The order write_textured_glb writes the triangles of `mesh` in (by part, then by material): the builder reads
+    them back in this order (`atlas-scene draw` takes one floor a triangle in it)."""
+    return np.lexsort((np.asarray(mesh.material, dtype=np.int64), np.asarray(mesh.owners, dtype=np.int64)))
+
+
+def write_textured_glb(mesh: tp.Any, path: Path) -> dict[str, int]:
+    """The game's models (models.TexturedMesh) as a raw glTF binary file at `path`, for the builder's textures
+    `keep` mode: one node and mesh per map piece part (named after it, for `scene.models.drop`), one primitive per
+    material, positions in the game's own coordinates with their texture coordinates (`TEXCOORD_0`), and each
+    texture's PNG once, at its own size, with a repeating sampler. A material whose texture could not be read keeps
+    a plain colour. Triangles are as the reader oriented them (front faces counter-clockwise). Returns counts."""
+    tris = np.asarray(mesh.triangles, dtype=np.float32)
+    uvs = np.asarray(mesh.uvs, dtype=np.float32)
+    owners = np.asarray(mesh.owners, dtype=np.int64)
+    material = np.asarray(mesh.material, dtype=np.int64)
+    order = textured_order(mesh)
+    chunks: list[bytes | np.ndarray] = []
+    offset = 0
+    views: list[dict[str, tp.Any]] = []
+    accessors: list[dict[str, tp.Any]] = []
+
+    def add(data: bytes | np.ndarray, **extra: tp.Any) -> int:
+        nonlocal offset
+        size = data.nbytes if isinstance(data, np.ndarray) else len(data)
+        views.append({"buffer": 0, "byteOffset": offset, "byteLength": size, **extra})
+        chunks.append(data)
+        offset += size
+        pad = -size % 4
+        if pad:
+            chunks.append(b"\0" * pad)
+            offset += pad
+        return len(views) - 1
+
+    # Textures: each PNG that was read, once.
+    images: list[dict[str, tp.Any]] = []
+    texture_index: dict[int, int] = {}
+    for index in range(len(mesh.textures)):
+        file = mesh.texture_path(index)
+        if file is None or not file.is_file():
+            continue
+        view = add(file.read_bytes())
+        images.append({"bufferView": view, "mimeType": "image/png", "name": str(mesh.textures[index].get("name", ""))})
+        texture_index[index] = len(images) - 1
+    materials = []
+    for entry in mesh.materials:
+        texture = int(entry.get("texture", -1))
+        kept = texture in texture_index
+        colour = [float(c) for c in entry.get("colour", [1, 1, 1, 1])][:4]
+        if not kept and texture >= 0:
+            colour = [0.55, 0.55, 0.55, colour[3] if len(colour) > 3 else 1.0]
+        pbr: dict[str, tp.Any] = {"baseColorFactor": colour, "metallicFactor": 0, "roughnessFactor": 1}
+        if kept:
+            pbr["baseColorTexture"] = {"index": texture_index[texture]}
+        material_json: dict[str, tp.Any] = {
+            "name": str(entry.get("name", "")),
+            "pbrMetallicRoughness": pbr,
+            "doubleSided": bool(entry.get("doubleSided")),
+        }
+        alpha = entry.get("alpha")
+        if alpha == "mask" and kept:
+            material_json["alphaMode"] = "MASK"
+            material_json["alphaCutoff"] = float(entry.get("cutoff", 0.5))
+        elif alpha == "blend":
+            material_json["alphaMode"] = "BLEND"
+        materials.append(material_json)
+    materials.append({"name": "untextured", "pbrMetallicRoughness": {"baseColorFactor": [0.55, 0.55, 0.55, 1], "metallicFactor": 0, "roughnessFactor": 1}})
+    fallback = len(materials) - 1
+
+    nodes, meshes = [], []
+    sorted_owners = owners[order]
+    sorted_materials = material[order]
+    boundaries = np.flatnonzero((np.diff(sorted_owners) != 0) | (np.diff(sorted_materials) != 0)) + 1
+    starts = [0, *boundaries.tolist()] if len(order) else []
+    ends = [*boundaries.tolist(), len(order)] if len(order) else []
+    current_owner = None
+    primitives: list[dict[str, tp.Any]] = []
+
+    def close(owner: int | None) -> None:
+        if owner is None or not primitives:
+            return
+        name = mesh.owner_names[owner] if 0 <= owner < len(mesh.owner_names) else f"part {owner}"
+        meshes.append({"name": name, "primitives": list(primitives)})
+        nodes.append({"name": name, "mesh": len(meshes) - 1})
+        primitives.clear()
+
+    for start, end in zip(starts, ends):
+        chosen = order[start:end]
+        owner = int(owners[chosen[0]])
+        if owner != current_owner:
+            close(current_owner)
+            current_owner = owner
+        positions = np.ascontiguousarray(tris[chosen].reshape(-1, 3))
+        coords = np.ascontiguousarray(uvs[chosen].reshape(-1, 2))
+        view = add(positions)
+        accessors.append(
+            {
+                "bufferView": view,
+                "componentType": 5126,
+                "count": len(positions),
+                "type": "VEC3",
+                "min": positions.min(axis=0).tolist(),
+                "max": positions.max(axis=0).tolist(),
+            }
+        )
+        attributes = {"POSITION": len(accessors) - 1}
+        index = int(material[chosen[0]])
+        material_ref = index if 0 <= index < len(mesh.materials) else fallback
+        if "baseColorTexture" in materials[material_ref]["pbrMetallicRoughness"]:
+            view = add(coords)
+            accessors.append({"bufferView": view, "componentType": 5126, "count": len(coords), "type": "VEC2"})
+            attributes["TEXCOORD_0"] = len(accessors) - 1
+        primitives.append({"attributes": attributes, "material": material_ref})
+    close(current_owner)
+
+    document: dict[str, tp.Any] = {
+        "asset": {"version": "2.0", "generator": "Atlas Map Maker"},
+        "scene": 0,
+        "scenes": [{"nodes": list(range(len(nodes)))}],
+        "nodes": nodes,
+        "meshes": meshes,
+        "materials": materials,
+        "accessors": accessors,
+        "bufferViews": views,
+        "buffers": [{"byteLength": offset}],
+    }
+    if images:
+        document["images"] = images
+        document["samplers"] = [{"magFilter": 9729, "minFilter": 9987, "wrapS": 10497, "wrapT": 10497}]
+        document["textures"] = [{"source": i, "sampler": 0} for i in range(len(images))]
+    text = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    text += b" " * (-len(text) % 4)
+    total = 12 + 8 + len(text) + 8 + offset
+    if total >= 2**32:
+        raise BuilderFailed("the game's models of this area are over 4 GB as one file")
+    with open(path, "wb") as handle:
+        handle.write(struct.pack("<4sII", b"glTF", 2, total))
+        handle.write(struct.pack("<I4s", len(text), b"JSON"))
+        handle.write(text)
+        handle.write(struct.pack("<I4s", offset, b"BIN\0"))
+        for chunk in chunks:
+            handle.write(chunk.tobytes() if isinstance(chunk, np.ndarray) else chunk)
+    return {"nodes": len(nodes), "materials": len(mesh.materials), "pictures": len(images), "bytes": total}
+
+
 def floor_heights(cuts: list[float], floors: int, low: float, high: float) -> list[list[float]] | None:
     """Each floor's `[min, max]` for its layer: from the cut below it (or the lowest ground) to the cut above it (or
     the highest point). None when the area has fewer than two floors: a map without storeys has none."""
@@ -187,14 +338,17 @@ def run_builder(
     `Cancelled`, which ends the builder at once)."""
     job_file = work / f"{name}.job.json"
     job_file.write_text(json.dumps(job), encoding="utf-8")
-    process = subprocess.Popen(
-        [str(builder), command, str(job_file)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=work,
-        creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
-    )
+    try:
+        process = subprocess.Popen(
+            [str(builder), command, str(job_file)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=work,
+            creationflags=CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        )
+    except OSError as error:
+        raise BuilderFailed(f"the 3D builder could not be started ({type(error).__name__}: {error})") from error
     lines: queue.Queue[bytes | None] = queue.Queue()
 
     def listen() -> None:

@@ -336,11 +336,25 @@ export interface MadeFloor {
   preview: string;
 }
 
+/** What 3D maps are made from ("3D look"): the game's own models with their textures, or the collision. */
+export type Look3d = 'models' | 'collision';
+
+export const LOOKS_3D: { id: Look3d; label: string }[] = [
+  { id: 'models', label: 'Game models' },
+  { id: 'collision', label: 'Collision' },
+];
+
 /** An area's 3D model, as Make map reports it (with "Also make 3D maps"). */
 export interface MadeScene {
   made: boolean;
   /** Why it was not made. */
   reason?: string;
+  /** What it was made from. */
+  look?: Look3d;
+  /** Why it was made from the collision when the game's models were asked for. */
+  lookNote?: string;
+  /** With the game's models: the textures kept (each at its own size at the finest level). */
+  textures?: { kept?: number; leftOut?: number; bytes?: number; largestCellBytes?: number };
   /** Triangles read from the game, and of the model's finest level once cleaned. */
   trianglesBefore: number;
   trianglesAfter?: number;
@@ -464,13 +478,14 @@ export interface FloorPlanReport {
 /** How the floors are drawn: the helper's render.MAP_STYLES. */
 export type MapStyleId = 'shaded' | 'outlines' | 'textured' | 'textured-outlines';
 
-export const TEXTURES_NOTE = 'Needs the game’s textures, which Map Maker does not read yet';
+export const TEXTURES_NOTE =
+  'Drawn from the game’s own models and textures; an area whose models cannot be read is height shaded';
 
 export const MAP_STYLES: { id: MapStyleId; label: string; available: boolean }[] = [
   { id: 'shaded', label: 'Height shaded', available: true },
   { id: 'outlines', label: 'Height shaded with outlines', available: true },
-  { id: 'textured', label: 'Textured', available: false },
-  { id: 'textured-outlines', label: 'Textured with outlines', available: false },
+  { id: 'textured', label: 'Textured', available: true },
+  { id: 'textured-outlines', label: 'Textured with outlines', available: true },
 ];
 
 export function mapStyleLabel(id: string | undefined): string {
@@ -483,6 +498,12 @@ export interface MadeArea {
   name: string;
   /** The map style it was drawn in (none: before map styles, "shaded"). */
   mapStyle?: MapStyleId;
+  /** The map style asked for, when it was drawn in another (a textured style whose models could not be read). */
+  mapStyleAsked?: MapStyleId;
+  /** Why it was not drawn in the style asked for. */
+  mapStyleNote?: string;
+  /** The game's own models and textures, as read (the textured styles and the 3D look "Game models"). */
+  models?: { status?: string; summary?: string; reason?: string } & Record<string, unknown>;
   /** Why the area was left out (a debug map, or one the config skips). */
   skipped?: string;
   /** What the floors were drawn from: `model` for a map made from a 3D model. */
@@ -659,7 +680,13 @@ export function sceneLines(scene: MadeScene | undefined): string[] {
   if (!scene) return [];
   if (!scene.made) return [`Not made: ${scene.reason ?? 'unknown reason'}`];
   const levels = scene.levels ?? [];
+  const textures = scene.textures?.kept ?? 0;
   return [
+    scene.look === 'models'
+      ? `From the game’s models${textures > 0 ? `, ${plural(textures, 'texture')} at their own size` : ''}`
+      : scene.look === 'collision'
+        ? 'From the collision'
+        : null,
     `${count(scene.trianglesBefore)} triangles read, ${count(scene.trianglesAfter ?? 0)} in the model`,
     levels.length > 1
       ? `Levels of detail: ${levels.map((level) => count(level.triangles)).join(', ')} triangles`
@@ -696,6 +723,8 @@ export function areaNotes(area: MadeArea): string[] {
     notes.push(`Collision placement: ${area.placement.verdict}`);
   if (area.scene && !area.scene.made && area.geometry?.used)
     notes.push(`No 3D model: ${area.scene.reason ?? 'unknown reason'}`);
+  if (area.scene?.lookNote) notes.push(`3D map from the collision: ${area.scene.lookNote}`);
+  if (area.mapStyleNote) notes.push(`Map ${area.mapStyleNote}`);
   return notes;
 }
 

@@ -3,11 +3,14 @@ item lot, text and coordinate here is invented, and the meshes are a few triangl
 
     python tests/fixtures.py dsr <folder>         # a made-up Dark Souls Remastered install
     python tests/fixtures.py dsr-map <folder>     # the same, with what a map needs (see make_dsr_map)
+    python tests/fixtures.py dsr-textured <folder>  # dsr-map with made-up models and textures (make_dsr_textured)
     python tests/fixtures.py bloodborne <folder>  # a made-up Bloodborne dump layout (see make_bloodborne)
 
 What Soulstruct 2.6.0 cannot write is noted where it matters:
-- map piece models (FLVER): no writer for a minimal model, so the fixture holds a file that is not a FLVER (the
-  reader's failure path); the success path is tested with a mock in test_geometry.py;
+- map piece models (FLVER): Soulstruct writes a small one (make_dsr_textured); make_dsr's area holds a file that
+  is not a FLVER (the reader's failure path);
+- materials (MTD): Soulstruct 2.6.0's MTD writer fails, so the made-up models have no MTD files and their
+  materials are told apart by their texture types and MTD names, as the reader does without an MTD;
 - Bloodborne MSB files: Soulstruct's Bloodborne MSB writer leaves each part's instance index unfilled and some
   byte defaults out of range, so make_bloodborne_msb fills those in while writing. It then puts small values in
   bytes Soulstruct expects blank, as real Bloodborne files have (the reader reads past them, see msb.load_msb);
@@ -716,8 +719,226 @@ def bridge_over_street() -> Triangles:
     return t
 
 
+
+# On top of make_dsr_map: Anor Londo's own models (map pieces) and textures, all made up. A ground plane (its
+# texture a DXT1 picture in the area's texture binder, `map/m15/m15_0000.tpfbhd`), a roof over the walled room whose
+# vertices stand on a bone 9 m up (a BC7 picture with a DX10 header, 128 x 64), a crate moved, turned and scaled by
+# its part (a BC1 sRGB picture in a loose TPF in the area folder) with a cut-out leaf (a DXT5 picture with holes,
+# found in another area's binder) and a mesh whose texture is nowhere, and a model file that is not a FLVER.
+
+GROUND_COLOUR = (230, 120, 40)  # orange
+ROOF_COLOUR = (40, 90, 220)  # blue
+CRATE_COLOUR = (30, 200, 60)  # green
+LEAF_COLOUR = (250, 240, 30)  # yellow
+
+
+def dds_dx10(width: int, height: int, dxgi: int, blocks: bytes) -> bytes:
+    """A DDS file with a DX10 header around block-compressed data."""
+    header = struct.pack(
+        "<4sIIIIIII44sII4sIIIIIIIIII",
+        b"DDS ",
+        124,
+        0x1 | 0x2 | 0x4 | 0x1000 | 0x80000,
+        height,
+        width,
+        len(blocks),
+        0,
+        1,
+        b"\0" * 44,
+        32,
+        0x4,
+        b"DX10",
+        0, 0, 0, 0, 0,
+        0x1000, 0, 0, 0, 0,
+    )
+    return header + struct.pack("<IIIII", dxgi, 3, 0, 1, 0) + blocks
+
+
+def bc7_solid(width: int, height: int, colour: tuple[int, int, int]) -> bytes:
+    """BC7 blocks of one colour (mode 6: two 7-bit endpoints with a shared low bit, every index 0)."""
+    bits, at = 0, 0
+
+    def put(value: int, count: int) -> None:
+        nonlocal bits, at
+        bits |= value << at
+        at += count
+
+    put(0x40, 7)  # mode 6
+    for channel in (*colour, 255):
+        put(channel >> 1, 7)
+        put(channel >> 1, 7)
+    put(1, 1)
+    put(1, 1)
+    block = bits.to_bytes(16, "little")
+    return block * ((width + 3) // 4) * ((height + 3) // 4)
+
+
+def pillow_dds(picture: tp.Any, pixel_format: str) -> bytes:
+    import io
+
+    out = io.BytesIO()
+    picture.save(out, "DDS", pixel_format=pixel_format)
+    return out.getvalue()
+
+
+def made_up_textures() -> dict[str, bytes]:
+    from PIL import Image
+
+    ground = Image.new("RGBA", (64, 32), GROUND_COLOUR + (255,))
+    crate = Image.new("RGBA", (16, 16), CRATE_COLOUR + (255,))
+    leaf = Image.new("RGBA", (16, 16), LEAF_COLOUR + (255,))
+    for x in range(8):  # its left half cut out
+        for y in range(16):
+            leaf.putpixel((x, y), (0, 0, 0, 0))
+    crate_dds = pillow_dds(crate, "DXT1")
+    return {
+        "m15_made_ground": pillow_dds(ground, "DXT1"),
+        "m15_made_roof": dds_dx10(128, 64, 98, bc7_solid(128, 64, ROOF_COLOUR)),  # BC7_UNORM
+        "m15_made_crate": dds_dx10(16, 16, 72, crate_dds[128:]),  # BC1_UNORM_SRGB
+        "m15_made_leaf": pillow_dds(leaf, "DXT5"),
+    }
+
+
+def tpf_of(stem: str, dds: bytes) -> bytes:
+    from soulstruct.containers.tpf import TPF, TPFPlatform, TPFTexture
+
+    return TPF(textures=[TPFTexture(stem=stem, format=0, data=dds)], platform=TPFPlatform.PC, encoding_type=1).to_bytes()
+
+
+def write_texture_binder(path: Path, textures: dict[str, bytes]) -> None:
+    """A split texture binder (`.tpfbhd` + `.tpfbdt`), one TPF per entry, the first compressed."""
+    from soulstruct.dcx import compress
+
+    entries = []
+    for index, (stem, dds) in enumerate(textures.items()):
+        data = tpf_of(stem, dds)
+        name = f"{stem}.tpf"
+        if index == 0:
+            data, name = compress(data, DCXType.DCX_DFLT_10000_24_9), f"{stem}.tpf.dcx"
+        entries.append(BinderEntry(data=data, entry_id=index, path=name))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Binder(version=BinderVersion.V3, v4_info=None, is_split_bxf=True, dcx_type=DCXType.Null, entries=entries).write(path)
+
+
+def flver_mesh(triangles: Triangles, uv_scale: float, texture: str | None, mtd: str, bone: int = 0, texture_type: str = "g_Diffuse", culled: bool = True) -> tp.Any:
+    """A FLVER mesh of `triangles` (faces kept as given; normals from their winding), texture coordinates from x and
+    z times `uv_scale`, its material naming `texture` (and a normal map) and the MTD `mtd`, its vertices on `bone`."""
+    from soulstruct.flver.face_set import FaceSet
+    from soulstruct.flver.material import Material
+    from soulstruct.flver.mesh import FLVERMesh
+    from soulstruct.flver.texture import Texture
+    from soulstruct.flver.vertex_array import VertexArray
+    from soulstruct.flver.vertex_array_layout import (
+        VertexArrayLayout,
+        VertexDataFormatEnum,
+        VertexNormal,
+        VertexPosition,
+        VertexUV,
+    )
+
+    layout = VertexArrayLayout(
+        [
+            VertexPosition(VertexDataFormatEnum.Float3, 0),
+            VertexNormal(VertexDataFormatEnum.FourBytesB, 12),
+            VertexUV(VertexDataFormatEnum.UV, 16),
+        ]
+    )
+    _, dtype = layout.get_dtypes()
+    corners = np.array(triangles, dtype=np.float64).reshape(-1, 3)
+    array = np.zeros(len(corners), dtype=dtype)
+    array["position"] = corners
+    tris = corners.reshape(-1, 3, 3)
+    normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    normals /= np.linalg.norm(normals, axis=1, keepdims=True)
+    array["normal"] = np.repeat(normals, 3, axis=0)
+    array["uv_0"] = corners[:, [0, 2]] * uv_scale
+    textures = [Texture(path=f"N:\\FRPG\\data\\Model\\map\\m15\\tex\\{texture}_n.tga", texture_type="g_Bumpmap")]
+    if texture:
+        textures.insert(0, Texture(path=f"N:\\FRPG\\data\\Model\\map\\m15\\tex\\{texture}.tga", texture_type=texture_type))
+    material = Material(name=f"made-up {texture}", mat_def_path=f"N:\\FRPG\\data\\Material\\mtd\\{mtd}.mtd", textures=textures)
+    faces = np.arange(len(corners), dtype=np.uint32).reshape(-1, 3)
+    face_set = FaceSet(flags=0, is_triangle_strip=False, use_backface_culling=culled, unk_x06=0, vertex_indices=faces)
+    return FLVERMesh(
+        is_dynamic=False,
+        material=material,
+        default_bone_index=bone,
+        bone_indices=np.array([bone], dtype=np.int32),
+        vertex_arrays=[VertexArray(array, layout)],
+        face_sets=[face_set],
+    )
+
+
+def write_flver(path: Path, name: str, meshes: list[tp.Any], bones: tp.Sequence[tp.Any] = ()) -> None:
+    from soulstruct.flver import FLVER
+    from soulstruct.flver.bone import FLVERBone
+    from soulstruct.flver.version import FLVERVersion
+
+    flver = FLVER(version=FLVERVersion.DarkSouls_A, bones=[FLVERBone(name=name), *bones], meshes=meshes)
+    write_dcx(path, flver.to_bytes())
+
+
+def make_dsr_textured(root: Path) -> Path:
+    from soulstruct.flver.bone import FLVERBone
+
+    make_dsr_map(root)
+    msb = make_anor_londo_msb()
+    pieces = (
+        ("m0000B0_0000", "m0000B0", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+        ("m0001B0_0000", "m0001B0", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+        ("m0002B0_0000", "m0002B0", (30.0, 0.5, 30.0), (0.0, 90.0, 0.0), (2.0, 1.0, 2.0)),
+        ("m0003B0_0000", "m0003B0", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)),
+    )
+    for name, model, position, rotation, scale in pieces:
+        msb.map_pieces.new(
+            name=name,
+            model=msb.auto_map_piece_model(model, ANOR_LONDO),
+            translate=Vector3(position),
+            rotate=Vector3(rotation),
+            scale=Vector3(scale),
+        )
+    path = root / "map" / "MapStudio" / f"{ANOR_LONDO}.msb"
+    path.unlink()
+    msb.write(path)
+
+    folder = root / "map" / ANOR_LONDO
+    textures = made_up_textures()
+    # The ground, and a room's walls of the ground's texture, seen from inside and out.
+    ground: Triangles = []
+    for x in range(-60, 60, 20):
+        for z in range(-60, 60, 20):
+            ground += quad(x, x + 20, z, z + 20, 0.0)
+    write_flver(folder / "m0000B0A15.flver.dcx", "m0000B0", [flver_mesh(ground, 0.25, "m15_made_ground", "M[D]")])
+    # The roof: its vertices at 0, on a bone 9 m up (as some map pieces stand on their bones). Its underside faces down.
+    roof = quad(-25, 25, -25, 25, 0.0)
+    underside = [[t[0], t[2], t[1]] for t in roof]
+    lift = FLVERBone(name="Roof", translate=Vector3((0.0, 9.0, 0.0)), parent_bone_index=0)
+    write_flver(
+        folder / "m0001B0A15.flver.dcx",
+        "m0001B0",
+        [flver_mesh(roof, 0.1, "m15_made_roof", "M[D]", bone=1), flver_mesh(underside, 0.1, "m15_made_roof", "M[D]", bone=1)],
+        [lift],
+    )
+    # The crate: a lid 2 m square, 1 m up; a leaf beside it (cut out, seen from both sides); a mesh without texture.
+    lid = quad(-1, 1, -1, 1, 1.0)
+    leaf = quad(1.5, 3.5, -1, 1, 1.0)
+    lost = quad(-1, 1, 2, 3, 1.0)
+    write_flver(
+        folder / "m0002B0A15.flver.dcx",
+        "m0002B0",
+        [
+            flver_mesh(lid, 0.5, "m15_made_crate", "M[D]"),
+            flver_mesh(leaf, 0.5, "m15_made_leaf", "M_made[D]_Edge", culled=False),
+            flver_mesh(lost, 0.5, "m15_made_missing", "M[D]"),
+        ],
+    )
+    (folder / "m0003B0A15.flver.dcx").write_bytes(b"not a model: made-up test file")
+    write_texture_binder(root / "map" / "m15" / "m15_0000.tpfbhd", {k: textures[k] for k in ("m15_made_ground", "m15_made_roof")})
+    write_dcx(folder / "m15_made_crate.tpf.dcx", tpf_of("m15_made_crate", textures["m15_made_crate"]))
+    write_texture_binder(root / "map" / "m10" / "m10_0000.tpfbhd", {"m15_made_leaf": textures["m15_made_leaf"]})
+    return root
+
 if __name__ == "__main__":
     kind, target = sys.argv[1], Path(sys.argv[2])
-    {"dsr": make_dsr, "dsr-map": make_dsr_map, "bloodborne": make_bloodborne}[kind](target)
+    {"dsr": make_dsr, "dsr-map": make_dsr_map, "dsr-textured": make_dsr_textured, "bloodborne": make_bloodborne}[kind](target)
     print(f"Wrote a made-up {kind} folder to {target}")
 

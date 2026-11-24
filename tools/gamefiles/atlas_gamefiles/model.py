@@ -156,7 +156,7 @@ class ModelMapMaker:
         self.merge_gap = merge_gap
         self.max_triangles = int(min(max(max_triangles, 1), LARGEST_MAX_TRIANGLES))
         try:
-            self.style = map_style(style, model=True)
+            self.style = map_style(style)
         except ValueError as error:
             raise MakeError(str(error)[:1].upper() + str(error)[1:] + ".", code="map-style") from None
         self.floor_overrides_file = Path(floor_overrides_file) if floor_overrides_file else None

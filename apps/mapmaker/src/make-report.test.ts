@@ -155,6 +155,41 @@ describe('make reports', () => {
     expect(areaNotes(area({ scene: failed }))).toEqual(['No 3D model: it was stopped after 600 s']);
   });
 
+  it('tell what the 3D maps and the textured maps were made from', () => {
+    const fromModels = {
+      made: true,
+      look: 'models' as const,
+      trianglesBefore: 82,
+      trianglesAfter: 80,
+      cells: 1,
+      files: 3,
+      bytes: 16_748,
+      seconds: 0.4,
+      textures: { kept: 4, leftOut: 0 },
+    };
+    expect(sceneLines(fromModels)[0]).toBe('From the game’s models, 4 textures at their own size');
+    const fromCollision = {
+      ...fromModels,
+      look: 'collision' as const,
+      lookNote: 'the game’s models could not be read (made-up reason)',
+      textures: undefined,
+    };
+    expect(sceneLines(fromCollision)[0]).toBe('From the collision');
+    expect(
+      areaNotes(
+        area({
+          scene: fromCollision,
+          mapStyle: 'shaded',
+          mapStyleAsked: 'textured',
+          mapStyleNote: 'drawn height shaded: the game’s models could not be read (made-up reason)',
+        }),
+      ),
+    ).toEqual([
+      '3D map from the collision: the game’s models could not be read (made-up reason)',
+      'Map drawn height shaded: the game’s models could not be read (made-up reason)',
+    ]);
+  });
+
   it('suggest a file name and accept only preview files', () => {
     expect(makeSuggestedFileName(makeReport(), new Date(2026, 10, 12))).toBe(
       'atlas-make-dark-souls-remastered-2026-11-12.zip',

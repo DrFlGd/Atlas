@@ -24,6 +24,11 @@ def dsr_map_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
+def dsr_textured_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    return fixtures.make_dsr_textured(tmp_path_factory.mktemp("games") / "DARK SOULS REMASTERED")
+
+
+@pytest.fixture(scope="session")
 def bloodborne_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return fixtures.make_bloodborne(tmp_path_factory.mktemp("games") / "CUSA99999")
 

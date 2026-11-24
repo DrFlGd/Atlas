@@ -10,7 +10,8 @@
 //!   style. Which floor each triangle is on comes from the caller, one
 //!   16-bit number a triangle in the same order (-1 for none); each pixel
 //!   shows the highest triangle of that floor there, lit a little from the
-//!   north-west, as the height shaded style is;
+//!   north-west, as the height shaded style is, its texture taken from a
+//!   copy about as fine as the pixel (each copy half the one before);
 //! - [`preview`]: a light copy of the model in its own axes and units for
 //!   the Map Maker's setup screen, at most [`PREVIEW_TRIANGLES`] triangles
 //!   (simplified with meshoptimizer when larger), each corner 16 bits a
@@ -184,6 +185,71 @@ fn texels(bytes: &[u8], table: &[f32; 256]) -> Option<Texels> {
     })
 }
 
+/// A texture's picture and its smaller copies, each half the size of the
+/// one before, down to one pixel: a floor drawn from above takes each pixel
+/// from the copy about as fine as the pixel, so a texture repeated many
+/// times under one pixel shows its average colour, not one texel by chance.
+struct Mips {
+    levels: Vec<Texels>,
+}
+
+impl Mips {
+    fn new(first: Texels) -> Mips {
+        let mut levels = vec![first];
+        loop {
+            let last = &levels[levels.len() - 1];
+            if last.width == 1 && last.height == 1 {
+                break;
+            }
+            let (w, h) = (last.width.div_ceil(2), last.height.div_ceil(2));
+            let mut pixels = Vec::with_capacity(w * h);
+            for y in 0..h {
+                for x in 0..w {
+                    let mut sum = [0.0f32; 4];
+                    for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                        let sx = (2 * x + dx).min(last.width - 1);
+                        let sy = (2 * y + dy).min(last.height - 1);
+                        let p = last.pixels[sy * last.width + sx];
+                        for k in 0..4 {
+                            sum[k] += p[k];
+                        }
+                    }
+                    pixels.push(sum.map(|v| v / 4.0));
+                }
+            }
+            levels.push(Texels {
+                width: w,
+                height: h,
+                pixels,
+            });
+        }
+        Mips { levels }
+    }
+
+    /// The copy for a triangle whose texture coordinates `uvs` cover
+    /// `pixel_area` (twice the area, in pixels) of the picture.
+    fn level(&self, uvs: [[f32; 2]; 3], pixel_area: f64) -> &Texels {
+        let first = &self.levels[0];
+        let a = [
+            f64::from(uvs[1][0] - uvs[0][0]),
+            f64::from(uvs[1][1] - uvs[0][1]),
+        ];
+        let b = [
+            f64::from(uvs[2][0] - uvs[0][0]),
+            f64::from(uvs[2][1] - uvs[0][1]),
+        ];
+        let texel_area =
+            (a[0] * b[1] - a[1] * b[0]).abs() * first.width as f64 * first.height as f64;
+        let ratio = texel_area / pixel_area.abs().max(1e-12);
+        let level = if ratio > 1.0 {
+            (0.5 * ratio.log2()).floor() as usize
+        } else {
+            0
+        };
+        &self.levels[level.min(self.levels.len() - 1)]
+    }
+}
+
 impl Texels {
     /// The texel at texture coordinates `uv`, repeating.
     fn at(&self, uv: [f32; 2]) -> [f32; 4] {
@@ -227,7 +293,7 @@ pub fn draw_floors(
     }
     fs::create_dir_all(output).map_err(|e| format!("{}: {e}", output.display()))?;
     let table = linear_table();
-    let mut pictures: Vec<Option<Option<Texels>>> = (0..model.images.len()).map(|_| None).collect();
+    let mut pictures: Vec<Option<Option<Mips>>> = (0..model.images.len()).map(|_| None).collect();
     let light = {
         let l = [-0.45f64, 0.4, 0.8];
         let n = (l[0] * l[0] + l[1] * l[1] + l[2] * l[2]).sqrt();
@@ -253,7 +319,7 @@ pub fn draw_floors(
                 (Colouring::Textures, Some(t)) if part.uvs.is_some() => {
                     let slot = &mut pictures[t.image];
                     if slot.is_none() {
-                        *slot = Some(texels(&model.images[t.image], &table));
+                        *slot = Some(texels(&model.images[t.image], &table).map(Mips::new));
                     }
                     slot.as_ref().and_then(Option::as_ref)
                 }
@@ -325,6 +391,10 @@ pub fn draw_floors(
                 .clamp(0, height as i64) as usize;
             let colours = part.colors.as_ref().map(|c| corners.map(|i| c[i]));
             let uvs = part.uvs.as_ref().map(|t| corners.map(|i| t[i]));
+            let texture = match (texture, uvs) {
+                (Some(mips), Some(uvs)) => Some(mips.level(uvs, area)),
+                _ => None,
+            };
             for y in y0..y1 {
                 let cy = y as f64 + 0.5;
                 for x in x0..x1 {

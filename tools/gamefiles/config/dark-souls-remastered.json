@@ -39,7 +39,7 @@
     "m15_01": { "names": ["Ground", "Rooftops"] }
   },
   "scene": {
-    "$comment": "3D maps (Also make 3D maps). drop: name patterns (* and ?) of collision parts never seen in game, left out of the 3D model; cellTriangles: about how many triangles one cell of the model holds at its finest. cellSize, levels and creaseAngle can be set too (see crates/atlas-scene).",
+    "$comment": "3D maps (Also make 3D maps). drop: name patterns (* and ?) of collision parts never seen in game, left out of the 3D model; cellTriangles: about how many triangles one cell of the model holds at its finest. cellSize, levels and creaseAngle can be set too (see crates/atlas-scene). models: the same settings for the 3D look Game models (drop then names map piece parts; textures: the builder's texture options, always keep).",
     "drop": [],
     "cellTriangles": 60000
   },
