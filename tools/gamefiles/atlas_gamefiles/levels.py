@@ -192,7 +192,9 @@ def summary_lines(report: dict[str, tp.Any]) -> list[str]:
         lines.append("Left out: " + ", ".join(parts))
     if report.get("notFoundCount"):
         names = ", ".join(item["name"] for item in report.get("notFound", [])[:5])
-        lines.append(f"{report['notFoundCount']:,} placed meshes were not found in the export folder: {names}")
+        count = report["notFoundCount"]
+        meshes = "mesh was" if count == 1 else "meshes were"
+        lines.append(f"{count:,} placed {meshes} not found in the export folder: {names}")
     if report.get("unknownTypes"):
         names = ", ".join(f"{item['name']} ({item['count']})" for item in report["unknownTypes"][:6])
         lines.append(f"Not understood, so left out: {names}")
