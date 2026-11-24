@@ -266,10 +266,12 @@ describe('the markers and the section', () => {
     expect(MAP_STYLES.filter((style) => style.available).map((style) => style.id)).toEqual([
       'shaded',
       'outlines',
+      'floors',
       'textured',
       'textured-outlines',
     ]);
     expect(mapStyleLabel('outlines')).toBe('Height shaded with outlines');
+    expect(mapStyleLabel('floors')).toBe('Colour by floor');
     expect(mapStyleLabel(undefined)).toBe('Height shaded');
   });
 });

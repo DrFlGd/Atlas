@@ -9,6 +9,8 @@
 //!                                    what a model file holds, and a preview
 //! atlas-scene triangles <job.json>   a model file's triangles in the world
 //! atlas-scene draw <job.json>        a model file's floors from above
+//! atlas-scene unpack <pack folder> <map id> <out.glb>
+//!                                    read a map's model back out as a raw model
 //! atlas-scene --version
 //! ```
 //!
@@ -36,6 +38,12 @@
 //!   "height"}, "floors": "<file: a 16-bit floor a triangle>", "count": n}`
 //!   and writes `floor-<n>.png` into `output`
 //!   (`atlas_scene::draw::draw_floors`), then `{"event":"done","files":[…]}`.
+//!
+//! For the Map Maker's "Draw all areas again": `unpack` writes a map's
+//! finest model, read back out of the pack (meshopt and all), as one raw
+//! `.glb` in the world (see `atlas_scene::unpack`), for `triangles` and
+//! `draw` to read like any model file, and `{"event":"done","report":…}`,
+//! or an `error` line and exits with 1.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -246,9 +254,21 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
+        ["unpack", folder, map, output] => {
+            match atlas_scene::unpack::unpack_to_file(Path::new(folder), map, Path::new(output)) {
+                Ok(report) => {
+                    say(&json!({ "event": "done", "report": report }));
+                    ExitCode::SUCCESS
+                }
+                Err(message) => {
+                    say(&json!({ "event": "error", "message": message }));
+                    ExitCode::from(1)
+                }
+            }
+        }
         _ => {
             eprintln!(
-                "atlas-scene {}\n\nUsage:\n  atlas-scene build <job.json>\n  atlas-scene check <pack folder>\n  atlas-scene inspect <model file> [--max-triangles <n>]\n  atlas-scene triangles <job.json>\n  atlas-scene draw <job.json>\n  atlas-scene --version",
+                "atlas-scene {}\n\nUsage:\n  atlas-scene build <job.json>\n  atlas-scene check <pack folder>\n  atlas-scene inspect <model file> [--max-triangles <n>]\n  atlas-scene triangles <job.json>\n  atlas-scene draw <job.json>\n  atlas-scene unpack <pack folder> <map id> <out.glb>\n  atlas-scene --version",
                 env!("CARGO_PKG_VERSION")
             );
             ExitCode::from(2)

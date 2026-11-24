@@ -32,8 +32,8 @@ export function MapStyleChoice(props: {
       </select>
       <span id={`${props.id}-note`} className="small muted">
         {model
-          ? 'Textured draws each floor from above in the model’s own textures and colours (height shaded when it has none). The styles with outlines draw the walls and the edges of the walkable floor as clear lines.'
-          : `Height shaded with outlines draws the walls and the edges of the walkable floor as clear lines. Textured styles: ${TEXTURES_NOTE.toLowerCase()}.`}
+          ? 'Textured draws each floor from above in the model’s own textures and colours (height shaded when it has none). Colour by floor gives each floor its own colour, darker low and lighter high within it. The styles with outlines draw the walls and the edges of the walkable floor as clear lines.'
+          : `Height shaded with outlines draws the walls and the edges of the walkable floor as clear lines. Colour by floor gives each floor its own colour, darker low and lighter high within it. Textured styles: ${TEXTURES_NOTE.toLowerCase()}.`}
       </span>
     </div>
   );

@@ -297,6 +297,57 @@ pub fn remake_start<R: Runtime>(
     checks.start(&helper, job, &folder, &out_dir)
 }
 
+/// The packs in the Atlas viewer's maps folder that have 3D maps, which "Draw all areas again" can draw again.
+#[tauri::command]
+pub fn redraw_packs<R: Runtime>(app: AppHandle<R>) -> Result<Vec<maps::PackWithScenes>, String> {
+    Ok(maps::packs_with_scenes(&viewer_maps_folder(&app)?))
+}
+
+/// Starts drawing every 2D floor of the pack `pack` (a folder in the Atlas viewer's maps folder) again from its
+/// own 3D models, in `map_style` (remembered unless textured), with the player's floor cuts. No game folder is needed. Its report
+/// goes to a new folder in the app's own data.
+#[tauri::command]
+pub fn redraw_start<R: Runtime>(
+    app: AppHandle<R>,
+    checks: State<'_, Checks>,
+    pack: String,
+    map_style: Option<String>,
+) -> Result<Status, String> {
+    if !maps::is_pack_name(&pack) {
+        return Err(format!("{pack} is not a map pack in the maps folder."));
+    }
+    let folder = viewer_maps_folder(&app)?.join(&pack);
+    if !folder.join("manifest.json").is_file() {
+        return Err(format!(
+            "The map pack {pack} is not in the maps folder any more."
+        ));
+    }
+    let file = settings_file(&app)?;
+    let mut settings = settings::read(&file);
+    // A pack's own model can be drawn in its textures, as a map made from a model (every map style).
+    let map_style = checked_style(map_style, &settings)?;
+    if settings.map_style() != map_style {
+        settings.map_style = Some(map_style.clone());
+        let _ = settings::write(&file, &settings);
+    }
+    let helper = checks::find_helper().ok_or(
+        "The file reader that comes with the Map Maker (atlas-gamefiles) is missing. Please reinstall the app.",
+    )?;
+    let base = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("redraws");
+    let out_dir = checks::new_run_folder(&base)?;
+    let job = Job::Redraw {
+        scene_builder: checks::find_scene_builder(),
+        floor_overrides: floor_overrides_for_helper(&app),
+        map_style,
+        floor_method: settings.floor_method().map(str::to_owned),
+    };
+    checks.start(&helper, job, &folder, &out_dir)
+}
+
 /// Shows the report of the last make of an earlier session again, when the app has just opened.
 #[tauri::command]
 pub fn restore_last_make<R: Runtime>(app: AppHandle<R>, checks: State<'_, Checks>) -> Status {

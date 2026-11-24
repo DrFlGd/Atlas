@@ -11,6 +11,7 @@ import { focusLocation, leaveFocus, useScene3d, webglFailed } from '../state/sce
 import { useAtlas } from '../state/store';
 import { deviceSignals } from './device';
 import { SceneEngine, type SceneDot, type SceneStatus } from './engine';
+import { floorBands } from './floorColours';
 import { headCut } from './goTo';
 import { SceneTitles } from './SceneTitles';
 import { areaTitles, type AreaTitle } from './titles';
@@ -239,6 +240,13 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
     engine?.setCut(top, towardCamera);
   }, [engine, top, towardCamera]);
 
+  // "Floor colours": the model painted by its floors' heights, where it has floors.
+  const floorColoursOn = useScene3d((s) => s.floorColours);
+  const painted = floorColoursOn && floors.length > 0;
+  useEffect(() => {
+    engine?.setFloorColours(painted ? floorBands(floors) : null);
+  }, [engine, painted, floors]);
+
   // The theme's colours are read from the page once it has them.
   useEffect(() => {
     if (!engine) return;
@@ -383,6 +391,7 @@ export default function SceneView({ touch }: { touch?: TouchMapOptions | undefin
         data-selected={selectedId ?? ''}
         data-cut={top ?? ''}
         data-focus={focusHere?.id ?? ''}
+        data-floor-colours={painted ? floors.length : 0}
       >
         <span data-testid="marker-count">{markers.length}</span>
       </div>

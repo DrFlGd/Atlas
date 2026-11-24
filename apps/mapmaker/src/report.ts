@@ -476,7 +476,7 @@ export interface FloorPlanReport {
 }
 
 /** How the floors are drawn: the helper's render.MAP_STYLES. */
-export type MapStyleId = 'shaded' | 'outlines' | 'textured' | 'textured-outlines';
+export type MapStyleId = 'shaded' | 'outlines' | 'floors' | 'textured' | 'textured-outlines';
 
 export const TEXTURES_NOTE =
   'Drawn from the game’s own models and textures; an area whose models cannot be read is height shaded';
@@ -484,6 +484,7 @@ export const TEXTURES_NOTE =
 export const MAP_STYLES: { id: MapStyleId; label: string; available: boolean }[] = [
   { id: 'shaded', label: 'Height shaded', available: true },
   { id: 'outlines', label: 'Height shaded with outlines', available: true },
+  { id: 'floors', label: 'Colour by floor', available: true },
   { id: 'textured', label: 'Textured', available: true },
   { id: 'textured-outlines', label: 'Textured with outlines', available: true },
 ];

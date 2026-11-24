@@ -294,7 +294,13 @@ pub fn clean_alignment(value: &Value) -> Option<Value> {
 
 /// The map styles the helper draws (render.MAP_STYLES). The textured ones draw the game's own models (or a 3D
 /// model's) in their textures; a game area whose models cannot be read is height shaded.
-pub const MAP_STYLES: [&str; 4] = ["shaded", "outlines", "textured", "textured-outlines"];
+pub const MAP_STYLES: [&str; 5] = [
+    "shaded",
+    "outlines",
+    "floors",
+    "textured",
+    "textured-outlines",
+];
 pub const DEFAULT_MAP_STYLE: &str = "shaded";
 
 pub fn is_map_style(style: &str) -> bool {

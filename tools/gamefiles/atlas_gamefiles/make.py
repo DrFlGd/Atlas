@@ -64,16 +64,7 @@ from .pack import (
     write_pack_json,
 )
 from .models import TexturedMesh, is_usable, load_mesh, summary as models_summary
-from .render import (
-    BACKGROUND,
-    compose,
-    draw_layer,
-    fallback_style,
-    make_frame,
-    map_style,
-    preview_png,
-    triangle_colours,
-)
+from .render import BACKGROUND, compose, draw_floor, fallback_style, make_frame, map_style, preview_png
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
 from .scene import (
     BuilderFailed,
@@ -767,7 +758,6 @@ class MapMaker:
             for floor in floors:
                 chosen = np.flatnonzero(plan.triangle_floor == floor.index) if len(mesh) else np.zeros(0, dtype=np.int64)
                 tris = mesh[chosen]
-                colours = triangle_colours(tris, float(low), float(high), plan.flipped)
                 walls = plan.wall_lines[floor.index] if floor.index < len(plan.wall_lines) else np.zeros((0, 2, 2))
                 fill = None
                 if fills is not None and floor.index < len(fills):
@@ -775,7 +765,17 @@ class MapMaker:
 
                     with Image.open(fills[floor.index]) as drawn:
                         fill = drawn.convert("RGBA")
-                yield floor.index, draw_layer(frame, tris, colours, walls, style, fill=fill)
+                yield floor.index, draw_floor(
+                    frame,
+                    style,
+                    tris,
+                    walls,
+                    index=floor.index,
+                    floor_range=(floor.low, floor.high),
+                    area_range=(float(low), float(high)),
+                    flipped=plan.flipped,
+                    fill=fill,
+                )
 
         pictures = compose(frame, layers(), opacity)
         for done, (floor_index, picture) in enumerate(pictures):

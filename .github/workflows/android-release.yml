@@ -192,6 +192,13 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.35.0
+
+          - **Floor colours in 3D.** **Floor colours** in the 3D tools paints each floor of a map's model in its own colour, darker low and lighter high within the floor, so you can see at a glance which floor a walkway or a room is on. The colours are told apart with the common types of colour blindness and match the Map Maker's **Colour by floor** map style. It works for any 3D map with floors, with nothing to download again, with the mouse, a controller or a finger, and Atlas remembers the choice. On a map without floors the button says why it does nothing.
+          - Ready for **Atlas Map Maker 0.6.0**, whose **Draw all areas again** draws a pack's 2D maps again from its own 3D maps.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.34.0
 
           - **Textures in 3D.** 3D maps can now keep the textures of the model they were made from, at full size in the finest detail and smaller for the coarser ones.
