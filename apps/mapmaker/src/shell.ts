@@ -6,6 +6,7 @@ import type {
   AnyReport,
   FloorMethod,
   HeightProfile,
+  Look3d,
   MapStyleId,
   PassageChoice,
   PassagePlace,
@@ -20,6 +21,8 @@ export interface AppInfo {
   sceneBuilderFound: boolean;
   /** "Also make 3D maps", as last chosen (on by default). */
   make3d: boolean;
+  /** "3D look", as last chosen: the game's own models (the default) or the collision. */
+  look3d: Look3d;
   /** "Map style", as last chosen. */
   mapStyle: MapStyleId;
   /** "Floors", as last chosen; null: as suits the game. */
@@ -231,8 +234,14 @@ export interface Shell {
     make3d: boolean,
     mapStyle: MapStyleId,
     floorMethod: FloorMethod | null,
+    look3d: Look3d,
   ): Promise<CheckStatus>;
-  remakeStart(area: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
+  remakeStart(
+    area: string,
+    make3d: boolean,
+    mapStyle: MapStyleId,
+    look3d: Look3d,
+  ): Promise<CheckStatus>;
   /** Asks for a 3D model file (null: the dialog was closed). */
   chooseModel(): Promise<ModelChoice | null>;
   /** Reads the chosen model: what it holds and a preview of its shape. */
@@ -281,10 +290,16 @@ export function createShell(invoke: Invoke): Shell {
     checkCancel: async () => {
       await invoke('check_cancel');
     },
-    makeStart: (folder, make3d, mapStyle, floorMethod) =>
-      invoke('make_start', { folder, make3d, mapStyle, floorMethod }) as Promise<CheckStatus>,
-    remakeStart: (area, make3d, mapStyle) =>
-      invoke('remake_start', { area, make3d, mapStyle }) as Promise<CheckStatus>,
+    makeStart: (folder, make3d, mapStyle, floorMethod, look3d) =>
+      invoke('make_start', {
+        folder,
+        make3d,
+        mapStyle,
+        floorMethod,
+        look3d,
+      }) as Promise<CheckStatus>,
+    remakeStart: (area, make3d, mapStyle, look3d) =>
+      invoke('remake_start', { area, make3d, mapStyle, look3d }) as Promise<CheckStatus>,
     restoreLastMake: () => invoke('restore_last_make') as Promise<CheckStatus>,
     redrawPacks: () => invoke('redraw_packs') as Promise<PackWithScenes[]>,
     redrawStart: (pack, mapStyle) =>

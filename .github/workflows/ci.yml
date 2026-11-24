@@ -363,8 +363,9 @@ jobs:
           ls -l target/release
 
       # Make map with the built helper and 3D builder on a made-up game folder
-      # (invented layouts, meshes and names; no game data), started the way the
-      # app starts it, then validate the pack it installed against
+      # (invented layouts, meshes, models, textures and names; no game data),
+      # started the way the app starts it (3D maps from the game's models), then
+      # validate the pack it installed against
       # @atlas/schema: manifest, every data file, the tile pyramids and every
       # tile, and the 3D models.
       - name: Make a map pack from a made-up folder and validate it
@@ -375,7 +376,7 @@ jobs:
             helper=tools/gamefiles/dist/atlas-gamefiles.exe
             builder=crates/atlas-scene/target/release/atlas-scene.exe
           fi
-          python tools/gamefiles/tests/fixtures.py dsr-map "$RUNNER_TEMP/made-up-dsr-map"
+          python tools/gamefiles/tests/fixtures.py dsr-textured "$RUNNER_TEMP/made-up-dsr-map"
           node apps/mapmaker/e2e/helper.js "$helper" "$RUNNER_TEMP/made-up-dsr-map" "$RUNNER_TEMP/make" --make "$RUNNER_TEMP/Maps" --scene-builder "$builder"
           pnpm --filter @atlas/pipeline validate-pack "$RUNNER_TEMP/Maps/dark-souls-remastered"
 

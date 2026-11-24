@@ -854,3 +854,159 @@ fn keeps_textures_smaller_for_coarser_levels_with_their_wrap_and_alpha() {
     assert_eq!(capped.side_at(16, 0), 16);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A made-up noisy picture (it does not compress), `side` pixels a side, seeded by `seed`.
+fn noisy_png(side: u32, seed: u32) -> Vec<u8> {
+    let pixels: Vec<[u8; 4]> = (0..side * side)
+        .map(|i| {
+            let v = (i.wrapping_add(seed).wrapping_mul(2_654_435_761) >> 11) as u8;
+            [v, v.wrapping_mul(7), v ^ 0x5A, 255]
+        })
+        .collect();
+    png_of(side, side, &pixels)
+}
+
+/// A level square of `size` at `x0`, in glTF's axes, with texture coordinates, using `material`.
+fn textured_square(x0: f64, size: f64, material: usize, name: &str) -> Part {
+    Part {
+        names: vec![name.to_owned()],
+        material,
+        positions: vec![
+            [x0, 0.0, 0.0],
+            [x0 + size, 0.0, 0.0],
+            [x0 + size, 0.0, -size],
+            [x0, 0.0, -size],
+        ],
+        colors: None,
+        uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]]),
+        indices: vec![0, 1, 2, 0, 2, 3],
+    }
+}
+
+/// Two squares far apart, each with a texture of its own.
+fn two_textured_squares() -> Model {
+    let images = vec![noisy_png(64, 1), noisy_png(64, 2)];
+    let materials = (0..2)
+        .map(|image| Material {
+            name: format!("made-up {image}"),
+            textured: true,
+            texture_color: textures::average_colour(&images[image]),
+            texture: Some(gltf::TextureRef {
+                image,
+                wrap: [gltf::WRAP_REPEAT, gltf::WRAP_REPEAT],
+                tex_coord: 0,
+            }),
+            ..Material::default()
+        })
+        .collect();
+    Model {
+        materials,
+        parts: vec![
+            textured_square(0.0, 4.0, 0, "near"),
+            textured_square(100.0, 4.0, 1, "far"),
+        ],
+        images,
+        skipped_primitives: 0,
+    }
+}
+
+#[test]
+fn keeps_each_picture_at_its_own_size_and_makes_heavy_cells_smaller() {
+    let model = two_textured_squares();
+    let own: Vec<usize> = model.images.iter().map(Vec::len).collect();
+    let dir = temp("cell-bytes");
+    let pictures_of = |built: &Built| -> Vec<(usize, Vec<Vec<u8>>)> {
+        built.scene["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|cell| {
+                let file = cell["lods"][0]["file"].as_str().unwrap();
+                let bytes = fs::read(dir.join(file)).unwrap();
+                let (json, bin) = split_glb(&bytes).unwrap();
+                let images = json["images"].as_array().cloned().unwrap_or_default();
+                let found = images
+                    .iter()
+                    .map(|image| {
+                        let view =
+                            &json["bufferViews"][image["bufferView"].as_u64().unwrap() as usize];
+                        let start = view["byteOffset"].as_u64().unwrap() as usize;
+                        let length = view["byteLength"].as_u64().unwrap() as usize;
+                        bin[start..start + length].to_vec()
+                    })
+                    .collect();
+                (images.len(), found)
+            })
+            .collect()
+    };
+    // Room for both pictures: one cell holds them both, each with its own bytes.
+    let together = build(
+        &model,
+        &options(json!({ "folder": "scene/together", "textures": { "mode": "keep" } })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(!together.report.cells_smaller_for_textures);
+    let cells = pictures_of(&together);
+    assert_eq!(cells.len(), 1, "{cells:?}");
+    assert_eq!(cells[0].0, 2);
+    for picture in &cells[0].1 {
+        assert!(
+            model.images.contains(picture),
+            "the finest level keeps each picture's own bytes"
+        );
+    }
+    // Room for one picture a cell: the cells are made smaller until each holds one.
+    let budget = own.iter().max().unwrap() + 16;
+    let apart = build(
+        &model,
+        &options(json!({
+            "folder": "scene/apart",
+            "textures": { "mode": "keep", "cellBytes": budget },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(apart.report.cells_smaller_for_textures);
+    assert!(apart.report.cell_size < together.report.cell_size);
+    let cells = pictures_of(&apart);
+    assert_eq!(cells.len(), 2, "{cells:?}");
+    for (count, found) in &cells {
+        assert_eq!(*count, 1);
+        let picture = image::load_from_memory(&found[0]).unwrap();
+        assert_eq!(
+            (picture.width(), picture.height()),
+            (64, 64),
+            "its own size"
+        );
+    }
+    // A cell size given by hand is kept.
+    let fixed = build(
+        &model,
+        &options(json!({
+            "folder": "scene/fixed",
+            "cellSize": 200.0,
+            "textures": { "mode": "keep", "cellBytes": budget },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert_eq!(fixed.report.cell_size, 200.0);
+    assert!(!fixed.report.cells_smaller_for_textures);
+    // A budget no picture fits stops at the smallest cells, not below.
+    let tiny = build(
+        &model,
+        &options(json!({
+            "folder": "scene/tiny",
+            "textures": { "mode": "keep", "cellBytes": 1 },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(tiny.report.cell_size >= textures::MIN_TEXTURED_CELL);
+    let _ = fs::remove_dir_all(&dir);
+}

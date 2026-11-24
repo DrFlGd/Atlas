@@ -433,6 +433,72 @@ fn writes_triangles_and_draws_floors_from_above() {
 }
 
 #[test]
+fn draws_a_texture_repeated_under_each_pixel_as_its_average() {
+    // A made-up floor 10 m square, its black and white checker texture
+    // repeated 64 times each way: drawn 20 pixels across, a pixel covers
+    // about three repeats, so each shows the grey between, not black or white.
+    let dir = temp("mips");
+    let mut checker = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut checker, 2, 2);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&[
+                0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 255,
+            ])
+            .unwrap();
+    }
+    fs::write(dir.join("checker.png"), checker).unwrap();
+    fs::write(
+        dir.join("floor.mtl"),
+        "newmtl Floor\nKd 1 1 1\nmap_Kd checker.png\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("floor.obj"),
+        "mtllib floor.mtl\nv 0 0 0\nv 10 0 0\nv 10 0 -10\nv 0 0 -10\nvt 0 0\nvt 64 0\nvt 64 64\nvt 0 64\nusemtl Floor\nf 1/1 2/2 3/3\nf 1/1 3/3 4/4\n",
+    )
+    .unwrap();
+    let (model, _) = read(&dir.join("floor.obj")).unwrap();
+    let axes = ["+x".to_owned(), "-z".to_owned(), "+y".to_owned()];
+    let transform = Transform::from_parts(Some(&axes), None, None).unwrap();
+    let frame = Frame {
+        x_min: 0.0,
+        z_max: 10.0,
+        scale: 2.0,
+        width: 20,
+        height: 20,
+    };
+    let floors = vec![0i16; model.triangles()];
+    let files = draw_floors(
+        &model,
+        &transform,
+        &frame,
+        &floors,
+        1,
+        Colouring::Textures,
+        &dir.join("drawn"),
+    )
+    .unwrap();
+    let picture = image::open(dir.join("drawn").join(&files[0]))
+        .unwrap()
+        .into_rgba8();
+    let values: Vec<u8> = picture.pixels().map(|p| p.0[0]).collect();
+    let (low, high) = (*values.iter().min().unwrap(), *values.iter().max().unwrap());
+    assert!(
+        high - low <= 12,
+        "even grey, not a pattern: {low} to {high}"
+    );
+    assert!(
+        (100..=230).contains(&low),
+        "grey, not black or white: {low}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn base64_and_uris() {
     for text in ["", "a", "ab", "abc", "abcd", "made-up ü"] {
         let encoded = crate::draw::base64_encode(text.as_bytes());

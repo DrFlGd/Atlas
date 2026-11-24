@@ -60,6 +60,9 @@ class AreaContent:
     # Geometry placement: model -> [(position, rotation)], and the parts' names in the same order.
     instances: dict[str, list[tuple[Vector, Vector]]] = field(default_factory=dict)
     part_names: dict[str, list[str]] = field(default_factory=dict)
+    # The visible models: map piece model -> [(position, rotation, scale)], and the parts' names in the same order.
+    pieces: dict[str, list[tuple[Vector, Vector, Vector]]] = field(default_factory=dict)
+    piece_names: dict[str, list[str]] = field(default_factory=dict)
     report: dict[str, tp.Any] = field(default_factory=dict)
 
 
@@ -252,6 +255,8 @@ def extract_area(
     scaled = 0
     instances: dict[str, list[tuple[Vector, Vector]]] = defaultdict(list)
     part_names: dict[str, list[str]] = defaultdict(list)
+    pieces: dict[str, list[tuple[Vector, Vector, Vector]]] = defaultdict(list)
+    piece_names: dict[str, list[str]] = defaultdict(list)
     for part in parts:
         kind = _kind(part)
         model = _model(part)
@@ -261,6 +266,12 @@ def extract_area(
             if (position, rotation) not in instances[model]:
                 instances[model].append((position, rotation))
                 part_names[model].append(part.name)
+        if model and kind == "MapPiece":
+            scale = getattr(part, "scale", None)
+            placed = (position, rotation, _vector(scale) if scale is not None else (1.0, 1.0, 1.0))
+            if placed not in pieces[model]:
+                pieces[model].append(placed)
+                piece_names[model].append(part.name)
         if kind == "Collision":
             result.collisions[part.name] = CollisionPart(
                 part.name,
@@ -283,7 +294,10 @@ def extract_area(
             characters.append(part)
     result.instances = dict(instances)
     result.part_names = dict(part_names)
+    result.pieces = dict(pieces)
+    result.piece_names = dict(piece_names)
     report["collisionParts"] = {"total": len(result.collisions), "movedOrTurned": moved, "scaled": scaled}
+    report["mapPieceParts"] = {"total": sum(len(v) for v in pieces.values()), "models": len(pieces)}
 
     # --- Bonfires (lamps in Bloodborne)
     lamp_rules = config.get("bonfires") if isinstance(config.get("bonfires"), dict) else None

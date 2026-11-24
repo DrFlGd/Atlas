@@ -347,7 +347,7 @@ class Redrawer:
         self.started = time.monotonic()
         try:
             # A pack's own model can be drawn in its textures and colours, as a map made from a model.
-            self.style: MapStyle = map_style(style, model=True)
+            self.style: MapStyle = map_style(style)
         except ValueError as error:
             raise RedrawError(str(error)[:1].upper() + str(error)[1:] + ".") from None
         self.staging = self.pack.with_name(STAGING.format(self.pack.name))
