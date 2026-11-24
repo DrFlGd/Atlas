@@ -7,8 +7,11 @@ import { expect, test } from './layout';
  * The width a game's guide pages are shown at, on the demo wiki's made-up
  * pages: a column of text by default, wider or as wide as the window by
  * the person's choice in the head of Guides, which is kept with their own
- * pages, or by the pack's default (`pageWidth` of its manifest). A phone
- * always shows a page as wide as the phone. With ATLAS_WIDTH_SHOTS set to
+ * pages, or by the pack's default (`pageWidth` of its manifest). A pack
+ * that knows how wide the site's own pages are (`siteWidth`) also offers
+ * that width, "Original"; one that does not has no such entry and shows
+ * a kept choice of it as a column of text. A phone always shows a page as
+ * wide as the phone. With ATLAS_WIDTH_SHOTS set to
  * a folder, the tests also keep screenshots there.
  */
 
@@ -42,7 +45,7 @@ async function openPage(page: Page, section: string, name: string): Promise<void
 }
 
 /** Chooses a width in the menu of the head of Guides. */
-async function choose(page: Page, width: 'reading' | 'wide' | 'full'): Promise<void> {
+async function choose(page: Page, width: 'reading' | 'wide' | 'full' | 'site'): Promise<void> {
   await page.getByTestId('guides-width').click();
   await page.getByTestId(`guides-width-${width}`).click();
   await expect(page.getByTestId('guides-width')).toHaveAttribute('data-width', width);
@@ -159,6 +162,75 @@ test.describe('on a computer', () => {
     await page.reload();
     await openPage(page, 'Basics', 'Isle portal');
     await expect(page.getByTestId('guides-width')).toHaveAttribute('data-width', 'reading');
+  });
+
+  test('offers the width of the site’s own pages when the pack knows it, and shows Reading for it when the pack does not', async ({
+    page,
+  }) => {
+    const errors = collectErrors(page);
+    // The pack as an importer writes it for a site whose pages are 1,012 pixels wide.
+    let site: Record<string, unknown> = { siteWidth: 1012, pageWidth: 'site' };
+    await page.route('**/packs/demo/manifest.json', async (route) => {
+      const manifest = (await (await route.fetch()).json()) as Record<string, unknown>;
+      return route.fulfill({ json: { ...manifest, ...site } });
+    });
+    await page.goto('./');
+    await openPage(page, 'Basics', 'Isle portal');
+    const button = page.getByTestId('guides-width');
+    await expect(button).toHaveAttribute('data-width', 'site');
+    await expect(button).toHaveAccessibleName('Page width: Original');
+    expect(await widthOf(page)).toBeCloseTo(1012, 0);
+
+    // The menu: four widths, the site's own last, with its number, marked as the pack's.
+    await button.click();
+    const menu = page.getByRole('menu', { name: 'Page width' });
+    await expect(menu.getByRole('menuitemradio')).toHaveText([
+      /^Reading/,
+      /^Wide/,
+      /^Full/,
+      /^Original · the site’s width.*1,012 pixels, as wide as the site’s own pages/,
+    ]);
+    await expect(menu.getByRole('menuitemradio', { name: /^Original/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await shot(page, 'page-width-menu-original');
+    await page.keyboard.press('Escape');
+
+    // Chosen by the person, it is kept with their own pages like any other.
+    await choose(page, 'wide');
+    expect(await widthOf(page)).toBeLessThanOrEqual(1000);
+    await choose(page, 'site');
+    expect(await widthOf(page)).toBeCloseTo(1012, 0);
+    await expect
+      .poll(async () => {
+        const stored = await storedSetting(page, 'ownPages:demo');
+        return typeof stored === 'string' ? (JSON.parse(stored) as { pageWidth?: string }) : null;
+      })
+      .toMatchObject({ pageWidth: 'site' });
+
+    // A pack that does not know the width (built before it was measured):
+    // the kept choice shows a column of text, and the menu has no such entry.
+    site = {};
+    await page.reload();
+    await openPage(page, 'Basics', 'Isle portal');
+    await expect(button).toHaveAttribute('data-width', 'reading');
+    expect(await widthOf(page)).toBeLessThanOrEqual(760);
+    await button.click();
+    await expect(menu.getByRole('menuitemradio')).toHaveText([/^Reading/, /^Wide/, /^Full/]);
+    await expect(page.getByTestId('guides-width-site')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    // The person's choice is kept as it was, for when the pack knows the width again.
+    expect(
+      JSON.parse((await storedSetting(page, 'ownPages:demo')) as string) as { pageWidth?: string },
+    ).toMatchObject({ pageWidth: 'site' });
+
+    // A width the pack gives that is too narrow to be a page is left out.
+    site = { siteWidth: 100, pageWidth: 'site' };
+    await page.reload();
+    await openPage(page, 'Basics', 'Isle portal');
+    await expect(button).toHaveAttribute('data-width', 'reading');
+    expect(realErrors(errors)).toEqual([]);
   });
 
   test('ignores a width the pack gives that it cannot read', async ({ page }) => {

@@ -332,6 +332,18 @@ describe('a trial read by one of the importer’s own readers', () => {
     expect(odd?.layout && 'pageWidth' in odd.layout).toBe(false);
     expect(siteTrialOf({ part: 0, reader: 'x'.repeat(61) })?.reader).toBeUndefined();
   });
+
+  it('keeps the width of the site’s own pages and the faint words, in bounds', () => {
+    const trial = siteTrialOf({
+      part: 0,
+      layout: { read: 'seen', notes: true, pageWidth: 'site', siteWidth: 1012, faint: 3 },
+    });
+    expect(trial?.layout).toMatchObject({ pageWidth: 'site', siteWidth: 1012, faint: 3 });
+    for (const siteWidth of [12, 1012.5, '1012', 99999]) {
+      const odd = siteTrialOf({ part: 0, layout: { read: 'seen', siteWidth, faint: 0 } });
+      expect(odd?.layout && ('siteWidth' in odd.layout || 'faint' in odd.layout)).toBe(false);
+    }
+  });
 });
 
 describe('whether an importer can try a file', () => {

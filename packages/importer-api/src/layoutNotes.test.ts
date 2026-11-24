@@ -12,6 +12,7 @@ import {
   layoutNotesMark,
   readLayoutNote,
   readLayoutNotesMark,
+  readLayoutWindow,
   type LayoutNote,
 } from './index';
 
@@ -184,6 +185,7 @@ class FakeDocument {
       ? {
           scrollX: 0,
           scrollY: 0,
+          innerWidth: 1280,
           getComputedStyle: (el: FakeElement) => ({
             display: 'block',
             visibility: 'visible',
@@ -195,6 +197,8 @@ class FakeDocument {
             textAlign: 'start',
             backgroundColor: 'rgba(0, 0, 0, 0)',
             backgroundImage: 'none',
+            color: 'rgb(32, 33, 34)',
+            opacity: '1',
             columnCount: 'auto',
             columnWidth: 'auto',
             float: 'none',
@@ -298,7 +302,12 @@ describe('the measuring step', () => {
   it('notes the copy, never the page, and takes off notes the page had', () => {
     const { copy, article } = measure(ARTICLE);
     expect(article.attrs).toEqual(ARTICLE.attrs);
-    expect(copy!.attrs).toEqual({ 'data-atlas-layout': '1 16', 'data-atlas-box': '0 0 900 400' });
+    expect(copy!.attrs).toEqual({
+      'data-atlas-layout': '1 16',
+      'data-atlas-box': '0 0 900 400',
+      // The window the page was laid out in.
+      'data-atlas-window': '1280',
+    });
     const [row, words, hidden] = copy!.children;
     expect(row!.attrs).toEqual({ 'data-atlas-box': '0 0 900 100', 'data-atlas-flow': 'row' });
     expect(row!.children.map((p) => p.attrs)).toEqual([
@@ -331,6 +340,58 @@ describe('the measuring step', () => {
     expect(look({ justifyContent: 'center', flexDirection: 'column' })).toBeUndefined();
     expect(look({ justifyContent: 'space-between' })).toBeUndefined();
     expect(look({})).toBeUndefined();
+  });
+
+  it('notes words shown clearly fainter than those around them, and not a link or a grey that reads', () => {
+    const cell = (span: Record<string, string>, around: Record<string, string> = {}): Shape => ({
+      ...ARTICLE,
+      children: [
+        {
+          name: 'td',
+          style: around,
+          text: '130',
+          children: [{ name: 'span', style: { display: 'inline', ...span }, text: '5.100.' }],
+        },
+        { name: 'p', text: 'Words of the page, more of them than of any other size.' },
+      ],
+    });
+    const look = (span: Record<string, string>, around?: Record<string, string>) =>
+      readLayoutNote(measure(cell(span, around)).copy!.children[0]!.children[0]!.attrs)?.look;
+    // See-through, or a light grey on white beside nearly black words.
+    expect(look({ opacity: '0.5' })?.faint).toBe(true);
+    expect(look({ color: 'rgb(170, 170, 170)' })?.faint).toBe(true);
+    expect(look({ color: 'rgba(32, 33, 34, 0.4)' })?.faint).toBe(true);
+    // On a dark page: a dark grey beside light words.
+    const dark = { backgroundColor: 'rgb(27, 27, 27)', color: 'rgb(224, 224, 224)' };
+    expect(look({ color: 'rgb(90, 90, 90)' }, dark)?.faint).toBe(true);
+    expect(look({ color: 'rgb(224, 224, 224)' }, dark)).toBeUndefined();
+    // A link in its own colour, a grey that still reads well, and words as dark as the rest: not faint.
+    expect(look({ color: 'rgb(6, 69, 173)' })).toBeUndefined();
+    expect(look({ color: 'rgb(255, 136, 0)' })).toBeUndefined();
+    expect(look({ color: 'rgb(114, 119, 125)' })).toBeUndefined();
+    expect(look({})).toBeUndefined();
+    // Written as a word of the look, and read back.
+    const faint = {
+      look: {
+        centred: false,
+        framed: false,
+        bold: false,
+        italic: false,
+        size: 1,
+        faint: true as const,
+      },
+    };
+    expect(layoutNoteAttributes(faint)).toEqual({ 'data-atlas-look': 'faint' });
+    expect(readLayoutNote(layoutNoteAttributes(faint))).toEqual(faint);
+  });
+
+  it('notes the width of the window, which a reader reads within a window’s bounds', () => {
+    expect(readLayoutWindow('1280')).toBe(1280);
+    expect(readLayoutWindow(' 1600 ')).toBe(1600);
+    for (const value of [undefined, '', '99', '12800', '1280px', '12.5', 'wide']) {
+      expect(readLayoutWindow(value)).toBeNull();
+    }
+    expect(LAYOUT_NOTE_ATTRIBUTES.window).toBe('data-atlas-window');
   });
 
   it('measures the outer elements first and says when its bounds ran out', () => {

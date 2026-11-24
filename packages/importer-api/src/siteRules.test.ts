@@ -1907,8 +1907,20 @@ describe('the layout section of a wiki or guide part', () => {
       'Part 1, layout.hidden, entry 2: ".a" is listed twice; list each selector once.',
     ]);
     expect(said(file({ pageWidth: 1200 }))).toEqual([
-      'Part 1, layout.pageWidth: must be one of "reading", "wide" or "full".',
+      'Part 1, layout.pageWidth: must be one of "reading", "wide", "full" or "site".',
     ]);
+    expect(said(file({ siteWidth: 100 }))).toEqual([
+      'Part 1, layout.siteWidth: must be at least 320.',
+    ]);
+    expect(said(file({ siteWidth: 1012.5 }))).toEqual([
+      'Part 1, layout.siteWidth: must be a whole number, not number.',
+    ]);
+    expect(said(file({ faint: [] }))).toEqual([
+      'Part 1, layout.faint: must hold at least 1 entry.',
+    ]);
+    expect(checkSiteRules(file({ pageWidth: 'site', siteWidth: 1012, faint: ['.ghost'] })).ok).toBe(
+      true,
+    );
     expect(said(file({ sideBySide: [] }))).toEqual([
       'Part 1, layout.sideBySide: must hold at least 1 entry.',
     ]);

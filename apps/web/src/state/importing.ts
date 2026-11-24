@@ -2105,6 +2105,8 @@ export function importContext(
     keepsHomePage: true,
     // And the width the site's pages are shown at.
     keepsPageWidth: true,
+    // And the width of the site’s own pages, and the page width that shows them at it.
+    keepsSiteWidth: true,
     // And which links of the pages name a location of a map.
     keepsMapLinks: true,
     // And the guides the site itself files a page under.

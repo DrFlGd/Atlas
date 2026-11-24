@@ -12,6 +12,11 @@ import {
   guideEntrySchema,
   idOf,
   isPageWidth,
+  isSiteWidth,
+  MAX_SITE_WIDTH,
+  MIN_SITE_WIDTH,
+  pageWidthPixels,
+  shownPageWidth,
   layerSchema,
   locationSchema,
   makeId,
@@ -389,6 +394,29 @@ describe('reading tolerantly, writing strictly', () => {
     expect(isPageWidth('full')).toBe(true);
     expect(isPageWidth('huge')).toBe(false);
     expect(PAGE_WIDTH_PIXELS.reading).toBe(760);
+  });
+
+  it('writes and reads the width of the site’s own pages, and shows `site` without it as reading', () => {
+    const pack = makeFixturePack();
+    const manifest = { ...pack.manifest, pageWidth: 'site', siteWidth: 1012 };
+    expect(manifestSchema.parse(manifest)).toMatchObject({ pageWidth: 'site', siteWidth: 1012 });
+    expect(packReadSchemas.manifestSchema.parse(manifest).siteWidth).toBe(1012);
+    expect(manifestSchema.parse(pack.manifest)).not.toHaveProperty('siteWidth');
+    // Whole pixels, within a phone's page and a very wide window.
+    for (const siteWidth of [1012.5, MIN_SITE_WIDTH - 1, MAX_SITE_WIDTH + 1, '1012', null]) {
+      const wrong = { ...pack.manifest, siteWidth };
+      expect(manifestSchema.safeParse(wrong).success).toBe(false);
+      // Read leniently: left out, the pack still opens.
+      expect(packReadSchemas.manifestSchema.parse(wrong).siteWidth).toBe(undefined);
+    }
+    expect(isSiteWidth(1012)).toBe(true);
+    expect(isSiteWidth(100)).toBe(false);
+    expect(shownPageWidth('site', 1012)).toBe('site');
+    expect(shownPageWidth('site', undefined)).toBe('reading');
+    expect(shownPageWidth('wide', undefined)).toBe('wide');
+    expect(pageWidthPixels('site', 1012)).toBe(1012);
+    expect(pageWidthPixels('site')).toBe(760);
+    expect(pageWidthPixels('wide', 1012)).toBe(1000);
   });
 
   it('still refuses what is wrong rather than new when reading', () => {

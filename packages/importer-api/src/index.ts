@@ -279,6 +279,17 @@ export interface ImportContext {
    */
   keepsPageWidth?: boolean;
   /**
+   * Optional: true when the app keeps the manifest's `siteWidth`, the width
+   * of the site's own pages in CSS pixels (measured on the pages laid out
+   * with the site's style sheets, see `layoutNotes.ts`, or as the site's
+   * rules file gives it, `layout.siteWidth`), and shows the pages at it as
+   * the page width `site` (see `pageWidth.ts` in `@atlas/schema`). An app
+   * that does not say so refuses a pack that has it, as any field it does
+   * not know, and knows no `pageWidth` of `site` either, so an importer
+   * writes neither unless this is true.
+   */
+  keepsSiteWidth?: boolean;
+  /**
    * Optional: true when the app keeps the manifest's `mapLinks`, which web
    * links of the pages name a location of a map by the id its site gives
    * it, as the site's rules file gives them (a part's `mapLinks`). An app

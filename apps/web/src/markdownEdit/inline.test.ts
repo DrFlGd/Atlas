@@ -58,6 +58,8 @@ describe('inline Markdown, read and written', () => {
     'Coloured: a [relic]{color=#b8714a}, [two words]{color=#ff8800} **[bold]{color=#ff8800}** and Cellar^[AB]{color=#82c936}^.',
     'In a link: [[a page]{color=#cc3333}](demo:guide:walk), and ||[hidden]{color=#123456}||.',
     'Not colours: \\[x\\]{color=#fff}, [x] {color=#fff} and [x]{color=red}.',
+    'Faint: [5.100.]{faint}130, [two words]{faint}, [[a page]{faint}](demo:guide:walk) and [[red]{color=#cc3333}]{faint}.',
+    'Not faint: \\[x\\]{faint}, [x] {faint} and [x]{faint }.',
   ])('%s', (markdown) => {
     roundTrip(markdown);
   });
@@ -165,6 +167,29 @@ describe('inline Markdown, read and written', () => {
       '[a]{color=#111111}[b]{color=#222222}',
     );
     expect(writeInline([text('a b', { colour: '#111111' })], 'cell')).toBe('[a b]{color=#111111}');
+  });
+
+  it('writes faint words, and keeps them faint as they are edited', () => {
+    expect(parseInline('[5.100.]{faint}130')).toEqual([
+      text('5.100.', { faint: true }),
+      text('130'),
+    ]);
+    expect(writeInline(parseInline('[5.100.]{faint}130'), 'cell')).toBe('[5.100.]{faint}130');
+    // Coloured words inside faint ones, and faint words inside other marks.
+    expect(writeInline(parseInline('[[red]{color=#c33}]{faint}'))).toBe(
+      '[[red]{color=#cc3333}]{faint}',
+    );
+    expect(writeInline(parseInline('[**bold**]{faint}'))).toBe('**[bold]{faint}**');
+    const pieces = parseInline('A [grey]{faint} word');
+    const bold = toggleMark(pieces, 2, 6, 'strong');
+    expect(writeInline(bold)).toBe('A **[grey]{faint}** word');
+    expect(writeInline(insertInline(bold, 4, 4, [text('X', bold[1]!.marks)]))).toBe(
+      'A **[grXey]{faint}** word',
+    );
+    // Faint and not faint side by side stay apart; two faint parts are one.
+    expect(writeInline([text('a', { faint: true }), text('b', { faint: true })])).toBe(
+      '[ab]{faint}',
+    );
   });
 
   it('writes a line break in a table cell as <br>', () => {

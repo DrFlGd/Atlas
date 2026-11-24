@@ -1,5 +1,5 @@
 import { sectionOfTitle } from '@atlas/core';
-import { parseColour, TEXT_COLOUR_ATTRIBUTE } from '../textColour';
+import { FAINT_ATTRIBUTE, parseColour, TEXT_COLOUR_ATTRIBUTE } from '../textColour';
 import { normalizeInline, type Inline, type LinkMark, type Marks } from './inline';
 import { readPictureSize } from './pictureSize';
 
@@ -38,6 +38,8 @@ function wrap(html: string, marks: Marks): string {
   if (marks.colour) {
     out = `<span${attrs({ class: 'text-colour', [TEXT_COLOUR_ATTRIBUTE]: marks.colour })}>${out}</span>`;
   }
+  if (marks.faint)
+    out = `<span${attrs({ class: 'text-faint', [FAINT_ATTRIBUTE]: '' })}>${out}</span>`;
   if (marks.link) {
     const { href, title, auto } = marks.link;
     // A link to a section of a page says which, where it is pointed at.
@@ -164,6 +166,7 @@ export function piecesFromDom(root: HTMLElement): Inline[] {
     if (node.hasAttribute('data-md-hidden')) inner.hidden = true;
     const colour = parseColour(node.getAttribute(TEXT_COLOUR_ATTRIBUTE) ?? '');
     if (colour) inner.colour = colour;
+    if (node.hasAttribute(FAINT_ATTRIBUTE)) inner.faint = true;
     if (node.hasAttribute('data-md-link')) {
       const link: LinkMark = { href: node.dataset.href ?? '' };
       if (node.dataset.title !== undefined) link.title = node.dataset.title;

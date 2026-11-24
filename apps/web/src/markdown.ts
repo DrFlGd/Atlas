@@ -57,8 +57,17 @@ import { isBoxMark, markdownMarks } from './markdownMarks';
  * - Coloured words, `[like this]{color=#b8714a}` (see `markdownMarks.ts`):
  *   a `span` whose one attribute of the text's own is the colour, checked
  *   to be `#` and six hexadecimal digits, as `data-text-colour`; the page
- *   shows it readable in both themes (see `textColour.ts`). No `style`
- *   attribute is ever written.
+ *   shows it readable in both themes (see `textColour.ts`). Faint words,
+ *   `[like this]{faint}`: a `span` marked `data-text-faint`, which the page
+ *   shows in its theme's muted text colour. No `style` attribute is ever
+ *   written: the alignment a table's column states (`:---:`) is the cell's
+ *   `data-align` (`left`, `center` or `right`, see {@link cellAlignment}),
+ *   which the page's style sheet shows, where markdown-it would write a
+ *   `style` the desktop app's content security policy refuses.
+ * - Pictures written with nothing between them, a link around each or not
+ *   (an item's icon and the bar beside it), stand in a `span` of their own,
+ *   `guide-picture-run` (see {@link pictureRuns}), which the page keeps on
+ *   one line, as the site kept them; its Markdown is the pictures as any.
  * - A box of facts, a table whose first row is its title and `{box}` (see
  *   `markdownMarks.ts` and {@link boxes}): an `aside` named by its title,
  *   holding the table, its title across it, a label beside each value, and
@@ -848,6 +857,93 @@ markdown.renderer.rules.link_open = (tokens, index, options, env, self) => {
 
 // Last: the entries of a page that are on the map, once its links are the app's.
 markdown.use(markdownEntries);
+
+// ---------------------------------------------------------------------------
+// Pictures side by side, and the alignment of table cells
+
+/** How many tokens from `at` are one picture of the pack, a link around it or not; 0 for none. */
+function pictureAt(children: readonly Token[], at: number): number {
+  const shown = (token: Token | undefined) =>
+    token?.type === 'atlas_picture' && (token.meta as unknown as PictureMeta).picture !== null;
+  if (shown(children[at])) return 1;
+  if (
+    children[at]?.type === 'link_open' &&
+    shown(children[at + 1]) &&
+    children[at + 2]?.type === 'link_close'
+  ) {
+    return 3;
+  }
+  return 0;
+}
+
+/**
+ * Pictures of the pack written with nothing between them (not even a
+ * space), each alone or the only thing a link holds, as `![icon](…)![bar](…)`
+ * or `[![icon](…)](…)![bar](…)`: two or more stand in a
+ * `span.guide-picture-run`, which the page keeps on one line. A site that
+ * sets an item's icon and the bar beside it in one cell keeps them together
+ * with the cell's own style (`white-space: nowrap`), which a pipe table
+ * cannot carry; written with nothing between them, they say the same. A
+ * picture shown as its words (not in the pack) is none.
+ */
+function pictureRuns(state: StateCore): void {
+  for (const block of state.tokens) {
+    if (block.type !== 'inline' || !block.children) continue;
+    const children = block.children;
+    const out: Token[] = [];
+    let changed = false;
+    for (let at = 0; at < children.length;) {
+      let end = at;
+      let count = 0;
+      for (let size = pictureAt(children, end); size > 0; size = pictureAt(children, end)) {
+        end += size;
+        count++;
+      }
+      if (count >= 2) {
+        const open = new state.Token('picture_run_open', 'span', 1);
+        open.attrs = [['class', 'guide-picture-run']];
+        out.push(
+          open,
+          ...children.slice(at, end),
+          new state.Token('picture_run_close', 'span', -1),
+        );
+        changed = true;
+        at = end;
+      } else if (count === 1) {
+        out.push(...children.slice(at, end));
+        at = end;
+      } else {
+        out.push(children[at]!);
+        at++;
+      }
+    }
+    if (changed) block.children = out;
+  }
+}
+
+markdown.core.ruler.push('atlas_picture_runs', pictureRuns);
+
+const ALIGNED = /^text-align:\s*(left|center|right)\s*;?$/u;
+
+/**
+ * The alignment a table's column states (`:---`, `:---:`, `---:`), which
+ * markdown-it writes as a `style` attribute, as `data-align` instead: the
+ * page's style sheet shows it, in the desktop app too, whose content
+ * security policy refuses a `style` attribute. A box of facts keeps its own
+ * alignment, as before.
+ */
+function cellAlignment(state: StateCore): void {
+  for (const token of state.tokens) {
+    if (token.type !== 'th_open' && token.type !== 'td_open') continue;
+    const style = token.attrGet('style');
+    if (style === null) continue;
+    token.attrs = (token.attrs ?? []).filter(([name]) => name !== 'style');
+    const align = ALIGNED.exec(String(style).trim())?.[1];
+    if (align) token.attrSet('data-align', align);
+  }
+}
+
+markdown.core.ruler.push('atlas_cell_alignment', cellAlignment);
 
 /** HTML for a guide body. Safe to insert with `innerHTML`. */
 export function renderGuideMarkdown(source: string, options: MarkdownOptions = {}): string {

@@ -20,6 +20,13 @@
 /** The attribute a coloured part of a guide carries its colour in. */
 export const TEXT_COLOUR_ATTRIBUTE = 'data-text-colour';
 
+/**
+ * The attribute a faint part of a guide carries, `[like this]{faint}` (see
+ * `markdownMarks.ts`): no colour of the page's, so nothing to work out
+ * here; the app's style sheet shows it in the theme's muted text colour.
+ */
+export const FAINT_ATTRIBUTE = 'data-text-faint';
+
 /** A colour as a guide writes it: `#` and three or six hexadecimal digits. */
 const WRITTEN = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/iu;
 

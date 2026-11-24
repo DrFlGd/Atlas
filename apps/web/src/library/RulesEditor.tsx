@@ -7,7 +7,7 @@ import {
   type SiteTrialLayout,
   type SiteTrialUnmatched,
 } from '@atlas/importer-api';
-import { DEFAULT_PAGE_WIDTH, PAGE_WIDTH_PIXELS, type PageWidth } from '@atlas/schema';
+import { DEFAULT_PAGE_WIDTH, pageWidthPixels, type PageWidth } from '@atlas/schema';
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { copyText } from '../clipboard';
@@ -1623,6 +1623,7 @@ function PageResult({ result, layout }: { result: SiteTrial; layout: TrialLayout
             title={result.title}
             width={result.layout?.pageWidth ?? DEFAULT_PAGE_WIDTH}
             widthGiven={result.layout?.pageWidth !== undefined}
+            siteWidth={result.layout?.siteWidth}
           />
         ) : result.text ? (
           <blockquote className="sites-trial-text" data-testid="rules-result-text">
@@ -2016,12 +2017,15 @@ function TrialPageText({
   title,
   width,
   widthGiven,
+  siteWidth,
 }: {
   source: string;
   pictures: readonly SiteTrialPicture[];
   title: string | undefined;
   width: PageWidth;
   widthGiven: boolean;
+  /** The width of the site's own pages the trial found, for `site`; at reading width without it. */
+  siteWidth: number | undefined;
 }) {
   const roomRef = useRef<HTMLDivElement>(null);
   const [room, setRoom] = useState<number | null>(null);
@@ -2038,7 +2042,7 @@ function TrialPageText({
       watch.disconnect();
     };
   }, []);
-  const pixels = PAGE_WIDTH_PIXELS[width];
+  const pixels = pageWidthPixels(width, siteWidth);
   // The text column at the page's width, in its frame of the guide's colours.
   const scale = fitScale(room, pixels + SHEET_EDGES);
   const html = useMemo(() => {
@@ -2057,8 +2061,8 @@ function TrialPageText({
     <>
       <p className="muted small" data-testid="rules-result-width">
         {widthGiven
-          ? `Drawn as Guides draws it at the width of the game’s pages, ${PAGE_WIDTH_PIXELS[width].toLocaleString('en')} pixels`
-          : `The file gives no width for the game’s pages, so this is drawn as Guides draws it at reading width, ${PAGE_WIDTH_PIXELS[width].toLocaleString('en')} pixels`}
+          ? `Drawn as Guides draws it at the width of the game’s pages, ${pixels.toLocaleString('en')} pixels`
+          : `The file gives no width for the game’s pages, so this is drawn as Guides draws it at reading width, ${pixels.toLocaleString('en')} pixels`}
         {scale < 1 ? `, at ${Math.round(scale * 100)}% of its size to fit here.` : '.'}
       </p>
       <div ref={roomRef} className="rules-trial-room">

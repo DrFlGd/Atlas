@@ -410,6 +410,10 @@ button.guides-crumb:hover {
   max-width: 1000px;
 }
 
+.guides-column[data-width='site'] {
+  max-width: var(--guides-site-width, 760px);
+}
+
 .guides-column[data-width='full'] {
   max-width: none;
   padding: 0 8px;
@@ -722,11 +726,40 @@ button.guides-crumb:hover {
   padding: 6px 10px;
   border: 1px solid var(--atlas-border);
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
+/*
+ * As browsers and wikis show a table: its headings in the middle of their
+ * columns, every cell's lines in the middle of its row's height. A box of
+ * facts keeps its own (below).
+ */
 .guides-page-body th {
   background: var(--atlas-surface-raised);
+  text-align: center;
+}
+
+/* The alignment a column states (`:---:` and the like) wins. */
+.guides-page-body [data-align='left'] {
+  text-align: left;
+}
+
+.guides-page-body [data-align='center'] {
+  text-align: center;
+}
+
+.guides-page-body [data-align='right'] {
+  text-align: right;
+}
+
+/*
+ * A small picture in a cell keeps its size: without this its column could
+ * be made narrower than the picture (an image whose width is a share of
+ * its box counts for nothing in the narrowest a column can be), and the
+ * picture would shrink to a sliver, or a picture beside it move under it.
+ */
+.guides-page-body :is(th, td) .guide-picture.inline img {
+  max-width: none;
 }
 
 /*
@@ -830,6 +863,30 @@ button.guides-crumb:hover {
   height: auto;
   border-radius: var(--atlas-radius-small);
   background: var(--atlas-surface-raised);
+}
+
+/*
+ * Pictures written with nothing between them (an item's icon and the bar
+ * beside it): kept on one line, as the site kept them. In the text they go
+ * to the next line together, and apart only when they are wider than the
+ * whole line; in a table's cell they never part, and the column is as wide
+ * as they are (a table scrolls sideways).
+ */
+.guide-picture-run {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.guides-page-body :is(th, td) .guide-picture-run {
+  flex-wrap: nowrap;
+  max-width: none;
+}
+
+.guides-page-body :is(th, td) .guide-picture-run .guide-picture.sized img {
+  max-width: none;
 }
 
 /* A small picture in the line of text (a badge, an icon), at the size the guide gives it. */

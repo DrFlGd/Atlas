@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { UiIcon } from '../components/icons';
 import { canChangeOwnPages, choosePageWidth, pageWidthOf, useOwnPages } from '../state/ownPages';
-import { PAGE_WIDTH_NAMES as WIDTHS } from '../state/pageWidthNames';
+import { PAGE_WIDTH_NAMES, pageWidthSays } from '../state/pageWidthNames';
 import type { LoadedGame } from '../state/store';
 
 /**
@@ -10,10 +10,15 @@ import type { LoadedGame } from '../state/store';
  * pages, so it stays when the game is built again or its pack is updated,
  * and wins over the width the site's rules file gave the pack. A phone
  * always shows a page as wide as the phone, so the menu is not shown there.
+ * "Original", the width of the site's own pages, is offered only for a
+ * pack that knows it (the manifest's `siteWidth`), with its number.
  */
 export function PageWidthMenu({ game }: { game: LoadedGame }) {
   const state = useOwnPages();
-  const { width, site } = pageWidthOf(game, state);
+  const { width, site, siteWidth } = pageWidthOf(game, state);
+  const widths = PAGE_WIDTH_NAMES.filter(
+    (item) => item.width !== 'site' || siteWidth !== undefined,
+  );
   const can = canChangeOwnPages(state);
   const [open, setOpen] = useState(false);
   const menu = useId();
@@ -21,7 +26,7 @@ export function PageWidthMenu({ game }: { game: LoadedGame }) {
   const items = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
     if (!open) return;
-    items.current[WIDTHS.findIndex((item) => item.width === width)]?.focus();
+    items.current[widths.findIndex((item) => item.width === width)]?.focus();
     const onDown = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -32,7 +37,7 @@ export function PageWidthMenu({ game }: { game: LoadedGame }) {
     // Focus the chosen width only when the menu opens.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
-  const label = `Page width: ${WIDTHS.find((item) => item.width === width)!.name}`;
+  const label = `Page width: ${widths.find((item) => item.width === width)!.name}`;
   return (
     <span
       ref={root}
@@ -46,8 +51,8 @@ export function PageWidthMenu({ game }: { game: LoadedGame }) {
           root.current?.querySelector<HTMLButtonElement>('button')?.focus();
         } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
           event.preventDefault();
-          const step = event.key === 'ArrowDown' ? 1 : WIDTHS.length - 1;
-          items.current[(Math.max(at, 0) + step) % WIDTHS.length]?.focus();
+          const step = event.key === 'ArrowDown' ? 1 : widths.length - 1;
+          items.current[(Math.max(at, 0) + step) % widths.length]?.focus();
         }
       }}
     >
@@ -70,7 +75,7 @@ export function PageWidthMenu({ game }: { game: LoadedGame }) {
       </button>
       {open ? (
         <div id={menu} className="guides-width-menu" role="menu" aria-label="Page width">
-          {WIDTHS.map((item, n) => (
+          {widths.map((item, n) => (
             <button
               key={item.width}
               ref={(button) => {
@@ -96,7 +101,7 @@ export function PageWidthMenu({ game }: { game: LoadedGame }) {
                     <span className="guides-width-site"> · the site’s width</span>
                   ) : null}
                 </span>
-                <span className="guides-width-says">{item.says}</span>
+                <span className="guides-width-says">{pageWidthSays(item.width, siteWidth)}</span>
               </span>
             </button>
           ))}

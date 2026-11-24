@@ -1,5 +1,5 @@
 import type { MarkdownIt, StateCore, StateInline, Token } from 'markdown-it';
-import { parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
+import { FAINT_ATTRIBUTE, parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
 
 /**
  * Marks a guide's Markdown has beyond CommonMark and tables, read the same
@@ -22,6 +22,12 @@ import { parseColour, TEXT_COLOUR_ATTRIBUTE } from './textColour';
  *   before them, is no colour and stays text. The renderer writes the
  *   colour only as an attribute (see `textColour.ts`), which the page shows
  *   readable in both themes.
+ * - Faint words: `[like this]{faint}`, read as coloured words are, with the
+ *   exact word `faint` in the braces: words the page shows clearly fainter
+ *   than the text around them (a wiki's grey part of a number that repeats
+ *   on every row, `[5.100.]{faint}130`). The view shows them in the theme's
+ *   muted text colour, in both themes, never in a colour of the page's. Faint
+ *   and coloured words may hold each other: `[[x]{color=#c33}]{faint}`.
  * - A box of facts: a table of two columns whose first row is the box's
  *   title and the exact text `{box}` (see {@link isBoxMark}), as
  *   `| Ember blade | {box} |`. Its other rows are a label and its value,
@@ -122,7 +128,10 @@ function scriptRule(marker: number, name: 'sup' | 'sub') {
 /** What follows the words of a coloured part: its colour. */
 const COLOUR = /^\{color=(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\}/u;
 
-/** Coloured words, `[like this]{color=#b8714a}`. */
+/** What follows the words of a faint part. */
+export const FAINT_MARK = '{faint}';
+
+/** Coloured words, `[like this]{color=#b8714a}`, and faint words, `[like this]{faint}`. */
 function colourRule(state: StateInline, silent: boolean): boolean {
   const start = state.pos;
   if (state.src.charCodeAt(start) !== BRACKET) return false;
@@ -131,19 +140,23 @@ function colourRule(state: StateInline, silent: boolean): boolean {
   if (silent) return false;
   const labelEnd = state.md.helpers.parseLinkLabel(state, start, false);
   if (labelEnd < 0 || labelEnd === start + 1) return false;
-  const match = COLOUR.exec(state.src.slice(labelEnd + 1, state.posMax));
+  const after = state.src.slice(labelEnd + 1, state.posMax);
+  const faint = after.startsWith(FAINT_MARK);
+  const match = faint ? null : COLOUR.exec(after);
   const colour = match ? parseColour(match[1]!) : null;
-  if (!match || !colour) return false;
+  if (!faint && !colour) return false;
+  const mark = faint ? FAINT_MARK : match![0];
+  const name = faint ? 'faint' : 'colour';
   const max = state.posMax;
   state.pos = start + 1;
   state.posMax = labelEnd;
-  const open = state.push('colour_open', 'span', 1);
+  const open = state.push(`${name}_open`, 'span', 1);
   open.markup = '[';
-  open.meta = { colour };
+  if (colour) open.meta = { colour };
   state.md.inline.tokenize(state);
-  const close = state.push('colour_close', 'span', -1);
-  close.markup = `]${match[0]}`;
-  state.pos = labelEnd + 1 + match[0].length;
+  const close = state.push(`${name}_close`, 'span', -1);
+  close.markup = `]${mark}`;
+  state.pos = labelEnd + 1 + mark.length;
   state.posMax = max;
   return true;
 }
@@ -214,6 +227,8 @@ export function markdownMarks(md: MarkdownIt): void {
   md.renderer.rules.colour_open = (tokens, index) =>
     `<span class="text-colour" ${TEXT_COLOUR_ATTRIBUTE}="${colourOf(tokens[index]!)}">`;
   md.renderer.rules.colour_close = () => '</span>';
+  md.renderer.rules.faint_open = () => `<span class="text-faint" ${FAINT_ATTRIBUTE}="">`;
+  md.renderer.rules.faint_close = () => '</span>';
   md.inline.ruler.after('emphasis', 'sup', scriptRule(CARET, 'sup'));
   md.inline.ruler.after('sup', 'sub', scriptRule(TILDE, 'sub'));
   md.core.ruler.after('inline', 'atlas_script_spaces', scriptSpaces);

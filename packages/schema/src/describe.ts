@@ -123,6 +123,7 @@ export function describePack(data: PackData, info: PackDescription): PackManifes
       : {}),
     ...(previous.homePage ? { homePage: previous.homePage } : {}),
     ...(previous.pageWidth ? { pageWidth: previous.pageWidth } : {}),
+    ...(previous.siteWidth ? { siteWidth: previous.siteWidth } : {}),
     ...(previous.mapLinks && previous.mapLinks.length > 0 ? { mapLinks: previous.mapLinks } : {}),
     ...(previous.pagesInOrder === true ? { pagesInOrder: true as const } : {}),
     created,

@@ -504,7 +504,20 @@
                       },
                       "pageWidth": {
                         "type": "string",
-                        "enum": ["reading", "wide", "full"]
+                        "enum": ["reading", "wide", "full", "site"]
+                      },
+                      "siteWidth": {
+                        "type": "integer",
+                        "minimum": 320,
+                        "maximum": 3840
+                      },
+                      "faint": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "additionalProperties": false
@@ -1041,7 +1054,20 @@
                       },
                       "pageWidth": {
                         "type": "string",
-                        "enum": ["reading", "wide", "full"]
+                        "enum": ["reading", "wide", "full", "site"]
+                      },
+                      "siteWidth": {
+                        "type": "integer",
+                        "minimum": 320,
+                        "maximum": 3840
+                      },
+                      "faint": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "additionalProperties": false
@@ -1587,7 +1613,20 @@
                       },
                       "pageWidth": {
                         "type": "string",
-                        "enum": ["reading", "wide", "full"]
+                        "enum": ["reading", "wide", "full", "site"]
+                      },
+                      "siteWidth": {
+                        "type": "integer",
+                        "minimum": 320,
+                        "maximum": 3840
+                      },
+                      "faint": {
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
                       }
                     },
                     "additionalProperties": false
@@ -3724,7 +3763,20 @@
                 },
                 "pageWidth": {
                   "type": "string",
-                  "enum": ["reading", "wide", "full"]
+                  "enum": ["reading", "wide", "full", "site"]
+                },
+                "siteWidth": {
+                  "type": "integer",
+                  "minimum": 320,
+                  "maximum": 3840
+                },
+                "faint": {
+                  "minItems": 1,
+                  "maxItems": 20,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "additionalProperties": false

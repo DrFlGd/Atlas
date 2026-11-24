@@ -1486,6 +1486,15 @@ label.tree-row:hover,
   color: var(--text-colour-light, currentColor);
 }
 
+/*
+ * Faint words of a guide ([like this]{faint}): words the page showed
+ * clearly fainter than the text around them, in the theme's muted text
+ * colour, which still reads on every background of the theme.
+ */
+.text-faint {
+  color: var(--atlas-muted);
+}
+
 /* Hidden text (||like this||): a button where it begins, until pressed. */
 .hidden-text-show {
   display: inline-block;
@@ -1529,7 +1538,12 @@ label.tree-row:hover,
   outline-offset: 1px;
 }
 
-/* A table of a page sorts by a heading pressed: the heading is the button, quiet until used. */
+/*
+ * A table of a page sorts by a heading pressed: the heading is the button,
+ * its words (and pictures) in the line as the heading had them, in the
+ * middle of the room left of the arrow, which is always shown, faintly
+ * until used.
+ */
 .table-sort {
   display: flex;
   align-items: baseline;
@@ -1547,6 +1561,11 @@ label.tree-row:hover,
   font-weight: inherit;
   text-align: inherit;
   cursor: pointer;
+}
+
+.table-sort-words {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .table-sort.table-sort-beside {
@@ -1568,7 +1587,7 @@ label.tree-row:hover,
   margin-left: auto;
   color: var(--atlas-muted);
   font-size: 0.85em;
-  opacity: 0;
+  opacity: 0.55;
   transition: opacity 0.12s;
 }
 
@@ -1597,13 +1616,6 @@ th[aria-sort='ascending'] .table-sort-arrow::after {
 
 th[aria-sort='descending'] .table-sort-arrow::after {
   content: '▼';
-}
-
-/* With a finger nothing is pointed at: a faint arrow says a heading sorts. */
-@media (hover: none) {
-  .table-sort-arrow {
-    opacity: 0.45;
-  }
 }
 
 .also-in {

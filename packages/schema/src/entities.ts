@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { anyIdSchema, gameIdSchema, idOf, isOwnId, OWN_ID_PREFIX } from './ids';
 import { mapLinksReadSchema, mapLinksWriteSchema } from './mapLinks';
-import { PAGE_WIDTHS } from './pageWidth';
+import { MAX_SITE_WIDTH, MIN_SITE_WIDTH, PAGE_WIDTHS } from './pageWidth';
 import { heightRangeSchema, sceneSchemas } from './scene';
 
 /**
@@ -245,6 +245,19 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
   const pageWidthSchema = z.enum(PAGE_WIDTHS);
 
   /**
+   * The width of the site's own pages, in CSS pixels: the width of their
+   * text column as the site's own style sheets lay it out in a computer's
+   * window, measured as the pages were read or built again (see
+   * `layoutNotes.ts` in `@atlas/importer-api`), or as the site's rules file
+   * gives it (`layout.siteWidth`). The page width `site` shows the pages
+   * at it (see `pageWidth.ts`); a pack without it has no such width to
+   * show. Optional; an app that does not know it never shows it. Read
+   * leniently: a value that cannot be read is left out. Added without a
+   * schema version change, as `pageWidth` was.
+   */
+  const siteWidthSchema = z.int().min(MIN_SITE_WIDTH).max(MAX_SITE_WIDTH);
+
+  /**
    * Which web links in the pack's pages name a location of a map by the id
    * its site gives it (see `mapLinks.ts`): as the site's rules file gives
    * them. Optional; an app that does not know it shows such links as web
@@ -274,6 +287,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     idSections: reading ? descriptive(idSectionsSchema) : idSectionsSchema.optional(),
     homePage: reading ? descriptive(homePageSchema) : homePageSchema.optional(),
     pageWidth: reading ? descriptive(pageWidthSchema) : pageWidthSchema.optional(),
+    siteWidth: reading ? descriptive(siteWidthSchema) : siteWidthSchema.optional(),
     mapLinks: mapLinksSchema,
     pagesInOrder: reading ? descriptive(pagesInOrderSchema) : pagesInOrderSchema.optional(),
   };
@@ -955,6 +969,7 @@ function packSchemas(mode: SchemaMode, { ownIds = false }: { ownIds?: boolean } 
     idSectionsSchema,
     homePageSchema,
     pageWidthSchema,
+    siteWidthSchema,
     writtenBySchema,
     packSourceSchema,
     layerImagesSchema,
@@ -992,6 +1007,7 @@ export const {
   idSectionsSchema,
   homePageSchema,
   pageWidthSchema,
+  siteWidthSchema,
   writtenBySchema,
   packSourceSchema,
   layerImagesSchema,

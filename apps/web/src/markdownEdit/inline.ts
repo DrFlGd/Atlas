@@ -1,6 +1,6 @@
 import { isLayoutMarkerLine } from '@atlas/schema';
 import MarkdownIt, { type Token } from 'markdown-it';
-import { CELL_BREAK, colourOf, markdownMarks } from '../markdownMarks';
+import { CELL_BREAK, colourOf, FAINT_MARK, markdownMarks } from '../markdownMarks';
 
 /**
  * The text of one part of a page (a paragraph, a heading, a list item, a
@@ -10,7 +10,8 @@ import { CELL_BREAK, colourOf, markdownMarks } from '../markdownMarks';
  *
  * Every inline feature the view shows has a piece or a mark here: bold
  * (`**`, `__`), italic (`*`, `_`), strikethrough (`~~`), raised and lowered
- * text (`^`, `~`), coloured words (`[like this]{color=#b8714a}`), code,
+ * text (`^`, `~`), coloured words (`[like this]{color=#b8714a}`), faint
+ * words (`[like this]{faint}`), code,
  * links (to the web, to a page or a location by its id, `<autolinks>`),
  * pictures by id, hidden text (`||like this||`) and
  * line breaks, soft (a line end) and hard (a backslash or two spaces at a
@@ -48,6 +49,8 @@ export interface Marks {
   sub?: true;
   /** Coloured, `#rrggbb`: kept as the page has it; the editor has no tool to colour words. */
   colour?: string;
+  /** Faint (`[like this]{faint}`): kept as the page has it; the editor has no tool to make words faint. */
+  faint?: true;
   link?: LinkMark;
 }
 
@@ -150,6 +153,12 @@ export function inlineFromTokens(
       case 'colour_close':
         delete marks.colour;
         break;
+      case 'faint_open':
+        marks.faint = true;
+        break;
+      case 'faint_close':
+        delete marks.faint;
+        break;
       case 'link_open': {
         const href = String(token.attrGet('href') ?? '');
         const title = token.attrGet('title');
@@ -210,6 +219,7 @@ export function sameMarks(a: Marks, b: Marks): boolean {
     !a.sup === !b.sup &&
     !a.sub === !b.sub &&
     a.colour === b.colour &&
+    !a.faint === !b.faint &&
     sameLink(a.link, b.link)
   );
 }
@@ -366,13 +376,14 @@ const writeTitle = (title: string | undefined) =>
 /** Plain text for inside `[…]` or `![…]`. */
 const escapeLabel = (text: string) => escapeText(text.replace(/\s*\n\s*/g, ' '), false);
 
-type MarkName = 'link' | 'strong' | 'em' | 's' | 'sup' | 'sub' | 'colour';
+type MarkName = 'link' | 'strong' | 'em' | 's' | 'sup' | 'sub' | 'faint' | 'colour';
 /**
  * Outermost first: a link holds bold, bold holds italic, italic holds
- * strikethrough, which holds raised and lowered text, which hold coloured
- * words, as a page's coloured words most often stand.
+ * strikethrough, which holds raised and lowered text, which hold faint
+ * words, which hold coloured words, as a page's coloured words most often
+ * stand.
  */
-const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's', 'sup', 'sub', 'colour'];
+const ORDER: readonly MarkName[] = ['link', 'strong', 'em', 's', 'sup', 'sub', 'faint', 'colour'];
 
 interface Open {
   name: MarkName;
@@ -391,10 +402,11 @@ const hasMark = (marks: Marks, name: MarkName): boolean =>
  */
 function spacesOutside(pieces: readonly Inline[]): Inline[] {
   const out: Inline[] = [];
-  // Spaces may stand inside coloured words, and raised and lowered text (escaped), so they keep those.
+  // Spaces may stand inside coloured and faint words, and raised and lowered text (escaped), so they keep those.
   const kept = (a: Marks): Marks => ({
     ...(a.hidden ? { hidden: true } : {}),
     ...(a.colour ? { colour: a.colour } : {}),
+    ...(a.faint ? { faint: true } : {}),
     ...(a.sup ? { sup: true } : {}),
     ...(a.sub ? { sub: true } : {}),
   });
@@ -452,6 +464,8 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
       out += `](${writeDestination(link.href)}${writeTitle(link.title)})`;
     } else if (open.name === 'colour') {
       out += `]{color=${open.colour!}}`;
+    } else if (open.name === 'faint') {
+      out += `]${FAINT_MARK}`;
     } else {
       out += open.delimiter;
     }
@@ -494,9 +508,17 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
         stack.push({ name, delimiter: '[', link: marks.link! });
         continue;
       }
+      // After a bracket that opens coloured or faint words, the line no longer starts with their words.
       if (name === 'colour') {
         out += '[';
+        atLineStart = false;
         stack.push({ name, delimiter: '[', colour: marks.colour! });
+        continue;
+      }
+      if (name === 'faint') {
+        out += '[';
+        atLineStart = false;
+        stack.push({ name, delimiter: '[' });
         continue;
       }
       out += delimiterFor(name, marks, lastChar());
@@ -572,7 +594,7 @@ export function writeInline(pieces: readonly Inline[], context: InlineContext = 
  * would read as one.
  */
 function delimiterFor(
-  name: Exclude<MarkName, 'link' | 'colour'>,
+  name: Exclude<MarkName, 'link' | 'colour' | 'faint'>,
   marks: Marks,
   before: string | undefined,
 ) {
@@ -731,6 +753,7 @@ function tidyMarks(marks: Marks): Marks {
   if (marks.sup) out.sup = true;
   if (marks.sub) out.sub = true;
   if (marks.colour) out.colour = marks.colour;
+  if (marks.faint) out.faint = true;
   if (marks.link) out.link = marks.link;
   return out;
 }

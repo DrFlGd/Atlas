@@ -28,6 +28,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type RefObject,
 } from 'react';
 import { create } from 'zustand';
@@ -534,7 +535,7 @@ function Reader({
   const atHome = isLanding(game, place);
   const title = placeTitle(game, place, name);
   // On a computer or a tablet, the pages are as wide as the person (or the site) chose.
-  const width = pageWidthOf(game, useOwnPages()).width;
+  const { width, siteWidth } = pageWidthOf(game, useOwnPages());
   return (
     <section className="guides-reader" aria-label={title}>
       <header className="guides-head">
@@ -630,7 +631,16 @@ function Reader({
         data-testid="guides-body"
         onScroll={onScroll}
       >
-        <div className="guides-column" data-width={wide ? width : undefined}>
+        <div
+          className="guides-column"
+          data-width={wide ? width : undefined}
+          // The site's own width is the pack's number (see `pageWidth.ts`), set as a property.
+          style={
+            wide && width === 'site' && siteWidth !== undefined
+              ? ({ '--guides-site-width': `${siteWidth}px` } as CSSProperties)
+              : undefined
+          }
+        >
           {!wide &&
           (atHome ||
             place.kind === 'search' ||

@@ -198,6 +198,10 @@ describe('own pages file', () => {
     const odd = readOwnPagesFile({ ...(JSON.parse(text) as object), pageWidth: 1000 });
     expect(odd.ok && odd.file.own.pageWidth).toBeUndefined();
     expect(odd.ok && odd.file.own.pages).toEqual(read.ok && read.file.own.pages);
+    // The site's own width is kept as any other.
+    const original = writeOwnPagesFile('demo', { ...own(), pageWidth: 'site' }, NOW);
+    const back = readOwnPagesFile(JSON.parse(original));
+    expect(back.ok && back.file.own.pageWidth).toBe('site');
   });
 
   it('with a width, is read by an Atlas before it as before', () => {
