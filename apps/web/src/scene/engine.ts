@@ -26,6 +26,17 @@ import {
   shiftedTarget,
 } from './goTo';
 import { FLOOR_SHADE, MAX_FLOORS, type FloorBand } from './floorColours';
+import {
+  channels,
+  DEFAULT_SHADE,
+  lookShown,
+  RAMP_STOPS,
+  shadeRamp,
+  SLOPE_SHADE,
+  slopeShade,
+  STRONG_SLOPE_SHADE,
+  type SceneLook,
+} from './looks';
 import { modelLoader, type ModelLoader } from './loader';
 import { firstKept, type ViewPoint } from './placing';
 
@@ -63,7 +74,10 @@ import { firstKept, type ViewPoint } from './placing';
  * surroundings, each floor in its own colour by height (see
  * `floorColours.ts`): a few lines added to its materials' shaders, which
  * read the floors from uniforms shared by them all, so turning it on or off
- * or changing the floors needs nothing loaded or built again.
+ * or changing the floors needs nothing loaded or built again. "Look"
+ * (`setLook`) draws the model textured, where it has textures or colours of
+ * its own, or shaded in one colour by height and slope (see `looks.ts`),
+ * the same way: Floor colours, while on, paints over either.
  */
 
 /** A location drawn as a dot. */
@@ -97,6 +111,10 @@ export interface SceneStatus {
   textureBytes: number;
   bias: number;
   dots: number;
+  /** Whether the model has textures or colours of its own; null while none of it is in. */
+  ownLook: boolean | null;
+  /** The look it is drawn with. */
+  look: SceneLook;
 }
 
 export interface SceneEvents {
@@ -167,6 +185,8 @@ interface Loaded {
   insides: THREE.Mesh[];
   triangles: number;
   textureBytes: number;
+  /** Whether its materials have textures or colours of their own (see `ownLookOf`). */
+  ownLook: boolean;
 }
 
 interface CellState {
@@ -271,27 +291,41 @@ function textureBytesOf(texture: THREE.Texture): number {
 export const INSIDE_SHADE = 0x3a3a3a;
 
 /**
- * The floors "Floor colours" paints by, shared by every material of the
- * map's model: `floorCount` 0 is off.
+ * How the map's model is painted, shared by every material of it: its
+ * look (see `looks.ts`; `lookShaded` 0 is textured) and the floors "Floor
+ * colours" paints by (`floorCount` 0 is off), which win over the look.
  */
-export interface FloorUniforms {
+export interface ModelPaint {
   floorCount: { value: number };
   floorLows: { value: number[] };
   floorHighs: { value: number[] };
   floorColours: { value: THREE.Color[] };
+  lookShaded: { value: number };
+  /** The shade's ramp, as the page shows it (sRGB, 0 to 1), at `RAMP_STOPS`. */
+  lookRamp: { value: THREE.Vector3[] };
+  /** The heights the ramp runs over: low, high. */
+  lookHeights: { value: THREE.Vector2 };
+  /** The shades of steep slopes (over 50°) and walls (over 70°). */
+  lookSlopes: { value: THREE.Vector2 };
 }
 
-export function floorUniforms(): FloorUniforms {
-  return {
+export function modelPaint(): ModelPaint {
+  const paint: ModelPaint = {
     floorCount: { value: 0 },
     floorLows: { value: new Array<number>(MAX_FLOORS).fill(0) },
     floorHighs: { value: new Array<number>(MAX_FLOORS).fill(0) },
     floorColours: { value: Array.from({ length: MAX_FLOORS }, () => new THREE.Color()) },
+    lookShaded: { value: 0 },
+    lookRamp: { value: RAMP_STOPS.map(() => new THREE.Vector3()) },
+    lookHeights: { value: new THREE.Vector2(0, 0) },
+    lookSlopes: { value: new THREE.Vector2(1, 1) },
   };
+  writeLook(paint, { look: 'textured', shade: DEFAULT_SHADE, strong: false, heights: null });
+  return paint;
 }
 
 /** Sets the floors to paint by, lowest first; none turns "Floor colours" off. */
-export function writeFloorUniforms(uniforms: FloorUniforms, bands: readonly FloorBand[]): void {
+export function writeFloorUniforms(uniforms: ModelPaint, bands: readonly FloorBand[]): void {
   const count = Math.min(bands.length, MAX_FLOORS);
   uniforms.floorCount.value = count;
   for (let i = 0; i < count; i++) {
@@ -303,37 +337,91 @@ export function writeFloorUniforms(uniforms: FloorUniforms, bands: readonly Floo
   }
 }
 
-const FLOOR_VERTEX_HEAD = /* glsl */ `
-varying float vFloorHeight;
+/** A look as the model is drawn with it (see `looks.ts`). */
+export interface ModelLook {
+  /** As drawn: textured only where the model has its own textures or colours. */
+  look: SceneLook;
+  /** The colour shaded with: a preset's id or `#rrggbb`. */
+  shade: string;
+  /** "Darker walls and slopes". */
+  strong: boolean;
+  /** The heights the shade's ramp runs over; null: not known, all of it at the middle of the ramp. */
+  heights: readonly [number, number] | null;
+}
+
+/** Sets the look to draw the model with: no shader is made again, nothing is loaded again. */
+export function writeLook(uniforms: ModelPaint, look: ModelLook): void {
+  uniforms.lookShaded.value = look.look === 'shaded' ? 1 : 0;
+  shadeRamp(look.shade).forEach((colour, i) => {
+    const [r, g, b] = channels(colour);
+    uniforms.lookRamp.value[i]!.set(r / 255, g / 255, b / 255);
+  });
+  const [low, high] = look.heights ?? [0, 0];
+  uniforms.lookHeights.value.set(low, high);
+  const slopes = look.strong ? STRONG_SLOPE_SHADE : SLOPE_SHADE;
+  uniforms.lookSlopes.value.set(slopeShade(slopes, 70), slopeShade(slopes, 90));
+}
+
+const PAINT_VERTEX_HEAD = /* glsl */ `
+varying vec3 vPaintWorld;
 `;
 
-const FLOOR_VERTEX = /* glsl */ `
+const PAINT_VERTEX = /* glsl */ `
 #include <project_vertex>
-vFloorHeight = (modelMatrix * vec4(transformed, 1.0)).y;
+vPaintWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
 `;
 
-const FLOOR_FRAGMENT_HEAD = /* glsl */ `
+const PAINT_FRAGMENT_HEAD = /* glsl */ `
 #define FLOOR_MAX ${MAX_FLOORS}
 uniform int floorCount;
 uniform float floorLows[FLOOR_MAX];
 uniform float floorHighs[FLOOR_MAX];
 uniform vec3 floorColours[FLOOR_MAX];
-uniform vec3 floorTone;
-varying float vFloorHeight;
+uniform float lookShaded;
+uniform vec3 lookRamp[4];
+uniform vec2 lookHeights;
+uniform vec2 lookSlopes;
+uniform vec3 paintTone;
+varying vec3 vPaintWorld;
+
+vec3 paintLinear(vec3 c) {
+  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
+}
+
+vec3 paintRamp(float t) {
+  if (t <= ${RAMP_STOPS[1].toFixed(3)}) {
+    return mix(lookRamp[0], lookRamp[1], t / ${RAMP_STOPS[1].toFixed(3)});
+  }
+  if (t <= ${RAMP_STOPS[2].toFixed(3)}) {
+    return mix(lookRamp[1], lookRamp[2], (t - ${RAMP_STOPS[1].toFixed(3)}) / ${(RAMP_STOPS[2] - RAMP_STOPS[1]).toFixed(3)});
+  }
+  return mix(lookRamp[2], lookRamp[3], (t - ${RAMP_STOPS[2].toFixed(3)}) / ${(RAMP_STOPS[3] - RAMP_STOPS[2]).toFixed(3)});
+}
 `;
 
 /**
- * Its floor's colour in place of the surface's own (its texture's cutout
- * kept), shaded by where the height lies within the floor: the shade is
- * applied as on the page (sRGB), so it reads as the Map Maker's 2D style.
+ * The look, then the floors: in place of the surface's own colour (its
+ * texture's cutout kept). Shaded, the ramp at the height, times the shade
+ * of the surface's slope (from the triangle itself, whatever normals the
+ * model has), worked as on the page (sRGB), as the Map Maker does. Floor
+ * colours: its floor's colour, shaded by where the height lies within the
+ * floor, so it reads as the Map Maker's 2D style.
  */
-const FLOOR_FRAGMENT = /* glsl */ `
+const PAINT_FRAGMENT = /* glsl */ `
 #include <color_fragment>
+if (lookShaded > 0.5) {
+  float span = lookHeights.y - lookHeights.x;
+  float t = span > 0.0 ? clamp((vPaintWorld.y - lookHeights.x) / span, 0.0, 1.0) : 0.5;
+  vec3 facing = cross(dFdx(vPaintWorld), dFdy(vPaintWorld));
+  float up = abs(facing.y) / max(length(facing), 1e-20);
+  float slope = up >= ${Math.cos((50 * Math.PI) / 180).toFixed(4)} ? 1.0 : up >= ${Math.cos((70 * Math.PI) / 180).toFixed(4)} ? lookSlopes.x : lookSlopes.y;
+  diffuseColor.rgb = paintLinear(paintRamp(t) * slope) * paintTone;
+}
 if (floorCount > 0) {
   int found = 0;
   for (int i = 0; i < FLOOR_MAX; i++) {
     if (i >= floorCount) break;
-    if (floorLows[i] <= vFloorHeight) found = i;
+    if (floorLows[i] <= vPaintWorld.y) found = i;
   }
   float low = floorLows[0];
   float high = floorHighs[0];
@@ -345,30 +433,42 @@ if (floorCount > 0) {
       colour = floorColours[i];
     }
   }
-  float t = high > low ? clamp((vFloorHeight - low) / (high - low), 0.0, 1.0) : 0.5;
+  float t = high > low ? clamp((vPaintWorld.y - low) / (high - low), 0.0, 1.0) : 0.5;
   float shade = mix(${FLOOR_SHADE[0].toFixed(3)}, ${FLOOR_SHADE[1].toFixed(3)}, t);
-  diffuseColor.rgb = colour * pow(shade, 2.2) * floorTone;
+  diffuseColor.rgb = colour * pow(shade, 2.2) * paintTone;
 }
 `;
 
 /**
- * Lets a material paint by floor when `uniforms` say so; `tone` darkens it
- * (the inside of a cut-open model).
+ * Lets a material be painted as `uniforms` say (the look, the floors);
+ * `tone` darkens it (the inside of a cut-open model). Every material of
+ * the model shares the uniforms and one program.
  */
-export function paintByFloor(
+export function paintModel(
   material: THREE.Material,
-  uniforms: FloorUniforms,
+  uniforms: ModelPaint,
   tone: THREE.Color = new THREE.Color(1, 1, 1),
 ): void {
   material.onBeforeCompile = (shader) => {
-    Object.assign(shader.uniforms, uniforms, { floorTone: { value: tone } });
+    Object.assign(shader.uniforms, uniforms, { paintTone: { value: tone } });
     shader.vertexShader =
-      FLOOR_VERTEX_HEAD + shader.vertexShader.replace('#include <project_vertex>', FLOOR_VERTEX);
+      PAINT_VERTEX_HEAD + shader.vertexShader.replace('#include <project_vertex>', PAINT_VERTEX);
     shader.fragmentShader =
-      FLOOR_FRAGMENT_HEAD +
-      shader.fragmentShader.replace('#include <color_fragment>', FLOOR_FRAGMENT);
+      PAINT_FRAGMENT_HEAD +
+      shader.fragmentShader.replace('#include <color_fragment>', PAINT_FRAGMENT);
   };
-  material.customProgramCacheKey = () => 'atlas-floor-colours';
+  material.customProgramCacheKey = () => 'atlas-model-paint';
+}
+
+/**
+ * The heights a model spans, for the shaded look: its own, else those of
+ * its cells; null where it says none.
+ */
+export function modelHeights(scene: Pick<Scene, 'heights' | 'cells'>): [number, number] | null {
+  if (scene.heights) return [scene.heights[0], scene.heights[1]];
+  const ranges = scene.cells.flatMap((cell) => (cell.heights ? [cell.heights] : []));
+  if (ranges.length === 0) return null;
+  return [Math.min(...ranges.map((r) => r[0])), Math.max(...ranges.map((r) => r[1]))];
 }
 
 /** Whether a file was written by the first builder, for a view that drew both sides of everything. */
@@ -500,13 +600,14 @@ export function compactPart({ geometry, matrix }: Primitive): THREE.BufferGeomet
  * a cell is drawn in a few calls, whatever its file holds. A material of
  * one primitive draws it as it is, its vertices shared with the rest of
  * the cell; the primitives of a material that has several are merged, each
- * with only the vertices it uses.
+ * with only the vertices it uses. With `paint`, they are painted as it
+ * says (the look, the floors; see `paintModel`).
  */
 export function mergeByMaterial(
   root: THREE.Object3D,
   bothSides = false,
   cut = false,
-  floors: FloorUniforms | null = null,
+  paint: ModelPaint | null = null,
 ): Loaded {
   root.updateMatrixWorld(true);
   const groups = new Map<string, { material: THREE.Material; parts: Primitive[] }>();
@@ -557,7 +658,7 @@ export function mergeByMaterial(
     let lambert = lamberts.get(material);
     if (!lambert) {
       lambert = lambertOf(material, bothSides);
-      if (floors) paintByFloor(lambert, floors);
+      if (paint) paintModel(lambert, paint);
       lamberts.set(material, lambert);
       if (lambert.map) textures.add(lambert.map);
       if (lambert.emissiveMap) textures.add(lambert.emissiveMap);
@@ -579,7 +680,7 @@ export function mergeByMaterial(
       meshes.push(mesh);
       if (lambert.side === THREE.FrontSide) {
         const back = insideOf(lambert);
-        if (floors) paintByFloor(back, floors, new THREE.Color(INSIDE_SHADE));
+        if (paint) paintModel(back, paint, new THREE.Color(INSIDE_SHADE));
         const inside = new THREE.Mesh(geometry, back);
         inside.matrixAutoUpdate = false;
         inside.visible = cut;
@@ -588,12 +689,32 @@ export function mergeByMaterial(
       }
     }
   }
+  const ownLook = [...lamberts.values()].some(ownLookOf);
   // The model's own geometries were never drawn: letting them go frees no attribute the meshes share.
   for (const geometry of sources) geometry.dispose();
   for (const material of materials) material.dispose();
   let textureBytes = 0;
   textures.forEach((texture) => (textureBytes += textureBytesOf(texture)));
-  return { level: -1, group, meshes, insides, triangles, textureBytes };
+  return { level: -1, group, meshes, insides, triangles, textureBytes, ownLook };
+}
+
+/**
+ * The name of the one material of a model the Map Maker makes from a
+ * game's collision (`raw_glb` in tools/gamefiles/atlas_gamefiles/scene.py):
+ * white, its vertices coloured by height, as the shaded look draws it.
+ */
+export const HEIGHT_COLOURED_MATERIAL = 'collision';
+
+/**
+ * Whether a material has a look of its own, to be shown "Textured": a
+ * texture, a colour other than white, or colours in its vertices other
+ * than the Map Maker's height ramp.
+ */
+export function ownLookOf(material: THREE.MeshLambertMaterial): boolean {
+  if (material.map) return true;
+  const { r, g, b } = material.color;
+  if (Math.min(r, g, b) < 0.98) return true;
+  return material.vertexColors && material.name !== HEIGHT_COLOURED_MATERIAL;
 }
 
 function disposeLoaded(loaded: Loaded): void {
@@ -638,8 +759,18 @@ export class SceneEngine {
   private dotShown: boolean[] = [];
   private titles: SceneTitleAnchor[] = [];
   private titlePositions: THREE.Vector3[] = [];
-  /** The floors "Floor colours" paints the model by (none: off). */
-  private readonly floorPaint = floorUniforms();
+  /** How the model is painted: its look, and the floors "Floor colours" paints by. */
+  private readonly paint = modelPaint();
+  /** The look asked for (see `setLook`). */
+  private look: Omit<ModelLook, 'heights'> = {
+    look: 'textured',
+    shade: DEFAULT_SHADE,
+    strong: false,
+  };
+  /** Whether the model has textures or colours of its own, found as its parts come in. */
+  private ownLook = false;
+  /** The heights the shaded look's ramp runs over; null until known. */
+  private shadeHeights: [number, number] | null;
   private readonly dotGeometry = new THREE.BufferGeometry();
   private readonly dotHidden: THREE.ShaderMaterial;
   private readonly dotSeen: THREE.ShaderMaterial;
@@ -701,6 +832,7 @@ export class SceneEngine {
     const maxX = Math.max(...boxes.map((b) => b[2]));
     const maxZ = Math.max(...boxes.map((b) => b[3]));
     const [low, high] = scene.heights ?? [0, 0];
+    this.shadeHeights = modelHeights(scene);
     const size = Math.max(maxX - minX, maxZ - minZ, 1);
     const side = Math.max(...boxes.map((b) => Math.max(b[2] - b[0], b[3] - b[1])), 1);
     this.extent = {
@@ -902,13 +1034,38 @@ export class SceneEngine {
 
   /** Paints the model by floor (see `floorColours.ts`), or not (null or no floors). */
   setFloorColours(bands: readonly FloorBand[] | null): void {
-    writeFloorUniforms(this.floorPaint, bands ?? []);
+    writeFloorUniforms(this.paint, bands ?? []);
     this.dirty = true;
   }
 
   /** How many floors the model is painted by now: 0 when "Floor colours" is off. */
   get floorColoursShown(): number {
-    return this.floorPaint.floorCount.value;
+    return this.paint.floorCount.value;
+  }
+
+  /**
+   * Draws the model textured (where it has textures or colours of its
+   * own) or shaded in a colour (see `looks.ts`): a few numbers its
+   * materials share, nothing built or loaded again.
+   */
+  setLook(look: SceneLook, shade: string, strong: boolean): void {
+    this.look = { look, shade, strong };
+    this.writeLook();
+    this.report();
+  }
+
+  /** The look the model is drawn with now. */
+  get lookShown(): SceneLook {
+    return this.paint.lookShaded.value > 0.5 ? 'shaded' : 'textured';
+  }
+
+  private writeLook(): void {
+    writeLook(this.paint, {
+      ...this.look,
+      look: lookShown(this.look.look, this.ownLook),
+      heights: this.shadeHeights,
+    });
+    this.dirty = true;
   }
 
   setSelected(id: string | null): void {
@@ -1152,6 +1309,8 @@ export class SceneEngine {
       textureBytes,
       bias: this.planBias(),
       dots: this.dotShown.filter(Boolean).length,
+      ownLook: cells > 0 ? this.ownLook : null,
+      look: this.lookShown,
     };
   }
 
@@ -1352,7 +1511,7 @@ export class SceneEngine {
         gltf.scene,
         drawnBothSides(gltf.asset.generator),
         this.cutOn(),
-        this.floorPaint,
+        this.paint,
       );
       loaded.level = level;
       if (this.disposed) {
@@ -1363,6 +1522,7 @@ export class SceneEngine {
       state.loaded = loaded;
       this.model.add(loaded.group);
       loaded.group.updateMatrixWorld(true);
+      this.lookAtPart(loaded);
       this.stepTextureBias(performance.now());
       this.placeDots(state);
       this.placeTitles();
@@ -1377,6 +1537,32 @@ export class SceneEngine {
       this.planDue = 0;
       this.report();
     }
+  }
+
+  /**
+   * What a part of the model just in says of its look: whether it has
+   * textures or colours of its own (shown textured from the first frame it
+   * is drawn in, where asked for) and, where the model does not say, its
+   * heights, for the shaded look's ramp.
+   */
+  private lookAtPart(loaded: Loaded): void {
+    let changed = false;
+    if (loaded.ownLook && !this.ownLook) {
+      this.ownLook = true;
+      changed = true;
+    }
+    if (!this.options.scene.heights && !this.options.scene.cells.some((cell) => cell.heights)) {
+      const box = new THREE.Box3().setFromObject(loaded.group);
+      if (!box.isEmpty()) {
+        const before = this.shadeHeights;
+        this.shadeHeights = [
+          Math.min(before?.[0] ?? box.min.y, box.min.y),
+          Math.max(before?.[1] ?? box.max.y, box.max.y),
+        ];
+        changed ||= before?.[0] !== this.shadeHeights[0] || before[1] !== this.shadeHeights[1];
+      }
+    }
+    if (changed) this.writeLook();
   }
 
   private async loadNeighbours(file: string): Promise<void> {

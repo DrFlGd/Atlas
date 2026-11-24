@@ -161,6 +161,8 @@ const UI_PATHS = {
   titles: 'M3 4h14v7H11.5L10 13.5L8.5 11H3zM6 7.5h8M10 16.5v1',
   // Floors one above the other: each floor in its own colour.
   floorColours: 'M10 2.5l7 3l-7 3l-7-3zM3 9.5l7 3l7-3M3 13.5l7 3l7-3',
+  // A painter's palette: how the model is drawn ("Look").
+  look: 'M10 3a7 7 0 1 0 0 14c1.3 0 1.7-1 1-2.1c-.6-1 0-2.2 1.3-2.2H14a3 3 0 0 0 3-3C17 6 14 3 10 3zM6.3 9.3h.01M8.3 6.3h.01M12 6h.01',
 } as const;
 
 export type UiIconName = keyof typeof UI_PATHS;

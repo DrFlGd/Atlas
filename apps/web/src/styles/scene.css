@@ -268,6 +268,109 @@
   font-size: 13px;
 }
 
+/* "Look" (SceneTools.tsx, LookPanel): textured or shaded, and the colour. */
+.scene-look {
+  width: 236px;
+}
+
+/*
+ * On a narrow screen, a panel of the tools (Look, Cut) opens beside the
+ * side's column, at its top, rather than below the tools, where the map's
+ * own buttons are.
+ */
+.touch:not([data-arrangement='wide']) .scene-cuts {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 8px);
+}
+
+.scene-look-choice {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--atlas-surface-hover);
+}
+
+.scene-look-option {
+  flex: 1;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.scene-look-option[aria-pressed='true'] {
+  background: var(--atlas-accent);
+  color: var(--atlas-accent-text);
+}
+
+.scene-look-option[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.scene-shades {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scene-shade {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 2px solid var(--atlas-border-strong);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.scene-shade[aria-pressed='true'],
+.scene-shade[data-pressed='true'] {
+  border-color: var(--atlas-text);
+  box-shadow:
+    0 0 0 2px var(--atlas-surface),
+    0 0 0 4px var(--atlas-accent);
+}
+
+.scene-shade:focus-visible,
+.scene-shade-own:focus-within {
+  outline: 2px solid var(--atlas-focus);
+  outline-offset: 2px;
+}
+
+/* A colour of one's own: a rainbow until one is picked, the colour picker over it. */
+.scene-shade-own {
+  display: block;
+  overflow: hidden;
+  background: conic-gradient(#e05a5a, #e0c45a, #6ad06a, #5ac4e0, #6a6ae0, #d05ad0, #e05a5a);
+}
+
+.scene-shade-own input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Fingers: larger to press. */
+.touch:not([data-input='mouse']) .scene-shade {
+  width: 36px;
+  height: 36px;
+}
+
+.touch:not([data-input='mouse']) .scene-look-option {
+  min-height: 40px;
+}
+
 .scene-note {
   max-width: 260px;
   margin: 0;
