@@ -195,6 +195,8 @@ jobs:
           ## New in 0.34.0
 
           - **Textures in 3D.** 3D maps can now keep the textures of the model they were made from, at full size in the finest detail and smaller for the coarser ones.
+          - **Area names in 3D.** Names of a map's areas float over the 3D view; press one and the view flies there. **Area names** in the 3D tools shows or hides them.
+          - **Go to a location in 3D.** Pressing a location, in the view, a list or the search, picks its floor, cuts the model away just above head height and brings the view down over it. Closing its card keeps that view; **All**, **Back to the start**, Escape or B goes back to the whole map.
           - **Walls facing away are not drawn.** Seen from outside, a level shows only the surfaces that face you. When a floor or a cut opens the model, the inside shows darkened.
           - **Wiki tables.** Pictures side by side in a table cell stay on one line at their own sizes. Tables of figures sort when you press a header (press again to reverse, a third time for the page's own order). Faint grey words on a page show faint in Atlas too.
           - **Original page width.** Besides the three page widths, a wiki whose own page width is known offers **Original**.
