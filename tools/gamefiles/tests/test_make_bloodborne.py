@@ -21,13 +21,10 @@ PACK = "bloodborne"
 
 
 def make(folder: Path, out: Path, maps: Path, **options) -> tuple[dict, list[dict]]:
-    from soulstruct.darksouls1r.maps import MSB as DarkSoulsMSB
-
     stream = io.StringIO()
-    # Soulstruct cannot write Bloodborne MSBs, so the made-up one is a Dark Souls MSB, read with that class.
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(type(PROFILES["bloodborne"]), "msb_class", lambda self: DarkSoulsMSB)
-        report = MapMaker(folder, out, Events(stream), maps_folder=maps, runner=InlineRunner(), **options).run()
+    # The made-up layout file is a Bloodborne MSB with what real ones hold where Soulstruct expects nothing
+    # (fixtures.make_bloodborne_msb), read with Soulstruct's Bloodborne class as on a real dump.
+    report = MapMaker(folder, out, Events(stream), maps_folder=maps, runner=InlineRunner(), **options).run()
     return report, [json.loads(line) for line in stream.getvalue().splitlines()]
 
 
@@ -50,6 +47,12 @@ def test_report(made) -> None:
     assert report["game"]["id"] == "bloodborne"
     (ward,) = report["areas"]
     assert ward["name"] == "Cathedral Ward"
+    # Read past the values real Bloodborne files hold where Soulstruct expects nothing, and said so.
+    assert ward["layoutReading"] == [
+        "read with relaxed checks, past values Atlas does not use: 2 in bytes expected blank; "
+        "8 with no field to hold them"
+    ]
+    assert not any("map layout" in warning for warning in report["warnings"])
     geometry = ward["geometry"]
     assert geometry["used"] == "collision" and geometry["navmeshForPassages"] is True
     assert geometry["collision"]["status"] == "ok" and geometry["navmesh"]["status"] == "ok"

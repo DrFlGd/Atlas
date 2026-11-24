@@ -239,7 +239,8 @@ class Checker:
         placements = []
         lots: set[int] = set()
         try:
-            msb = load_msb(profile, area)
+            layout_notes: list[str] = []
+            msb = load_msb(profile, area, layout_notes)
             summary = summarize(profile, area, msb)
         except Cancelled:
             raise
@@ -250,7 +251,7 @@ class Checker:
             instances = summary.instances
             placements = summary.placements
             lots = summary.item_lots
-            entry["msb"] = {"ok": True}
+            entry["msb"] = {"ok": True, **({"notes": layout_notes} if layout_notes else {})}
             entry["parts"] = summary.parts
             entry["partsTotal"] = summary.parts_total
             entry["treasures"] = summary.treasures

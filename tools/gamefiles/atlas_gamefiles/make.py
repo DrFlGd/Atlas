@@ -291,11 +291,12 @@ class MapMaker:
         worlds: dict[str, AreaContent | str] = {}
         msbs: dict[str, tp.Any] = {}
         bonfire_models: set[str] = set()
+        layout_notes: dict[str, list[str]] = {}
         for index, area in enumerate(areas):
             self.token.stop()
             events.progress(0.03 + 0.02 * index / len(areas), f"{area.name}: reading the map layout and event script")
             try:
-                msbs[area.id] = load_msb(profile, area)
+                msbs[area.id] = load_msb(profile, area, layout_notes.setdefault(area.id, []))
                 worlds[area.id] = extract_area(area, msbs[area.id], root, content, config, bonfire_models, profile)
             except Cancelled:
                 raise
@@ -316,6 +317,8 @@ class MapMaker:
             entry, area_out = self.make_area(
                 profile, root, area, worlds[area.id], index, len(made_areas), area_start, area_span, content, config, fmt
             )
+            if layout_notes.get(area.id):
+                entry["layoutReading"] = layout_notes[area.id]
             report["areas"].append(entry)
             if area_out is not None:
                 outs.append(area_out)
