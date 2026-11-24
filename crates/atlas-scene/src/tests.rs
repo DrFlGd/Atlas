@@ -1010,3 +1010,285 @@ fn keeps_each_picture_at_its_own_size_and_makes_heavy_cells_smaller() {
     assert!(tiny.report.cell_size >= textures::MIN_TEXTURED_CELL);
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A made-up ground of 8 by 8 textured squares, 25 apart, the two pictures
+/// taking turns, so cells cut from it each hold both.
+fn textured_ground() -> Model {
+    let images = vec![noisy_png(64, 3), noisy_png(64, 4)];
+    let materials = (0..2)
+        .map(|image| Material {
+            name: format!("made-up {image}"),
+            textured: true,
+            texture_color: textures::average_colour(&images[image]),
+            texture: Some(gltf::TextureRef {
+                image,
+                wrap: [gltf::WRAP_REPEAT, gltf::WRAP_REPEAT],
+                tex_coord: 0,
+            }),
+            double_sided: true,
+            ..Material::default()
+        })
+        .collect();
+    let mut parts = Vec::new();
+    for j in 0..8 {
+        for i in 0..8 {
+            let mut square = textured_square(i as f64 * 25.0, 4.0, (i + j) % 2, "square");
+            for p in &mut square.positions {
+                p[2] -= j as f64 * 25.0;
+            }
+            parts.push(square);
+        }
+    }
+    Model {
+        materials,
+        parts,
+        images,
+        skipped_primitives: 0,
+    }
+}
+
+/// How many pictures each cell's finest file holds.
+fn pictures_per_cell(built: &Built, pack: &Path) -> Vec<usize> {
+    built.scene["cells"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|cell| {
+            let file = cell["lods"][0]["file"].as_str().unwrap();
+            let (json, _) = split_glb(&fs::read(pack.join(file)).unwrap()).unwrap();
+            json["images"].as_array().map_or(0, Vec::len)
+        })
+        .collect()
+}
+
+#[test]
+fn a_small_model_kept_whole_is_one_cell_with_each_picture_once() {
+    let model = textured_ground();
+    let dir = temp("one-cell");
+    // Cut as the triangles ask: many cells, each with its own copy of the pictures.
+    let cut = build(
+        &model,
+        &options(json!({
+            "folder": "scene/cut",
+            "cellTriangles": 8,
+            "textures": { "mode": "keep" },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(!cut.report.one_cell);
+    assert!(cut.report.cells > 4, "{}", cut.report.cells);
+    assert!(pictures_per_cell(&cut, &dir).iter().sum::<usize>() > 2);
+    assert!(cut.report.warnings.is_empty(), "{:?}", cut.report.warnings);
+
+    // Kept whole: one cell over the whole model, each picture in it once.
+    let whole = build(
+        &model,
+        &options(json!({
+            "folder": "scene/whole",
+            "cellTriangles": 8,
+            "oneCell": true,
+            "textures": { "mode": "keep" },
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(whole.report.one_cell);
+    assert_eq!(whole.report.cells, 1);
+    assert!(!whole.report.cells_smaller_for_textures);
+    assert!(
+        whole.report.warnings.is_empty(),
+        "{:?}",
+        whole.report.warnings
+    );
+    assert_eq!(pictures_per_cell(&whole, &dir), [2]);
+    assert_eq!(whole.report.triangles, cut.report.triangles);
+    let cell = &whole.scene["cells"][0];
+    let bounds: Vec<f64> = cell["bounds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    // It covers the whole model: 179 by 179 units from its lowest corner.
+    assert!(bounds[2] - bounds[0] >= 179.0, "{bounds:?}");
+    // Its finest file holds each picture's own bytes, once.
+    let file = cell["lods"][0]["file"].as_str().unwrap();
+    let bytes = fs::read(dir.join(file)).unwrap();
+    let (json, bin) = split_glb(&bytes).unwrap();
+    for image in json["images"].as_array().unwrap() {
+        let view = &json["bufferViews"][image["bufferView"].as_u64().unwrap() as usize];
+        let start = view["byteOffset"].as_u64().unwrap() as usize;
+        let length = view["byteLength"].as_u64().unwrap() as usize;
+        assert!(model.images.contains(&bin[start..start + length].to_vec()));
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_model_too_large_to_be_one_cell_is_cut_with_a_warning() {
+    // A made-up model of more materials than one cell may hold, a square each.
+    let count = ONE_CELL_MAX_MATERIALS + 1;
+    let parts = (0..count)
+        .map(|i| {
+            let mut square = textured_square((i % 20) as f64 * 10.0, 4.0, i, "square");
+            square.uvs = None;
+            for p in &mut square.positions {
+                p[2] -= (i / 20) as f64 * 10.0;
+            }
+            square
+        })
+        .collect();
+    let model = Model {
+        materials: (0..count)
+            .map(|i| Material {
+                name: format!("made-up {i}"),
+                ..Material::default()
+            })
+            .collect(),
+        parts,
+        images: Vec::new(),
+        skipped_primitives: 0,
+    };
+    let dir = temp("one-cell-large");
+    let built = build(
+        &model,
+        &options(json!({ "folder": "scene/large", "oneCell": true, "cellTriangles": 100 })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(!built.report.one_cell);
+    assert!(built.report.cells > 1);
+    assert_eq!(
+        built.report.warnings,
+        [format!(
+            "the model is too large to be kept as one piece (301 materials, more than 300), so it was cut into {} cells",
+            built.report.cells
+        )]
+    );
+    let _ = fs::remove_dir_all(&dir);
+
+    // Each limit on its own, and all at once.
+    let fits = Whole {
+        triangles: ONE_CELL_MAX_TRIANGLES,
+        materials: ONE_CELL_MAX_MATERIALS,
+        picture_bytes: ONE_CELL_MAX_PICTURE_BYTES,
+        file_bytes: check::MAX_FILE_BYTES,
+    };
+    assert!(too_large_for_one_cell(fits).is_empty());
+    let over = [
+        Whole {
+            triangles: ONE_CELL_MAX_TRIANGLES + 1,
+            ..fits
+        },
+        Whole {
+            materials: ONE_CELL_MAX_MATERIALS + 1,
+            ..fits
+        },
+        Whole {
+            picture_bytes: ONE_CELL_MAX_PICTURE_BYTES + 1,
+            ..fits
+        },
+        Whole {
+            file_bytes: check::MAX_FILE_BYTES + 1,
+            ..fits
+        },
+    ];
+    let said: Vec<Vec<String>> = over.iter().map(|w| too_large_for_one_cell(*w)).collect();
+    assert_eq!(
+        said,
+        [
+            vec!["3000001 triangles, more than 3000000".to_owned()],
+            vec!["301 materials, more than 300".to_owned()],
+            vec!["pictures that take 301 MB once loaded, more than 300 MB".to_owned()],
+            vec!["a finest file that could pass 256 MB".to_owned()],
+        ]
+    );
+    let all = Whole {
+        triangles: ONE_CELL_MAX_TRIANGLES + 1,
+        materials: ONE_CELL_MAX_MATERIALS + 1,
+        picture_bytes: ONE_CELL_MAX_PICTURE_BYTES + 1,
+        file_bytes: check::MAX_FILE_BYTES + 1,
+    };
+    assert_eq!(too_large_for_one_cell(all).len(), 4);
+}
+
+#[test]
+fn pictures_are_counted_at_their_loaded_size() {
+    let picture = noisy_png(64, 5);
+    let keep = TextureOptions {
+        mode: textures::TextureMode::Keep,
+        ..TextureOptions::default()
+    };
+    // 64 by 64 pixels, 4 bytes each, a third more for the smaller copies.
+    assert_eq!(loaded_picture_bytes(&picture, &keep), 21_846);
+    let smaller = TextureOptions {
+        max_size: Some(32),
+        ..keep
+    };
+    assert_eq!(loaded_picture_bytes(&picture, &smaller), 5_462);
+    // A picture whose size cannot be read counts as its bytes.
+    assert_eq!(loaded_picture_bytes(b"not a picture", &keep), 13);
+    // Each picture once, however many materials show it.
+    let model = textured_ground();
+    let dir = temp("one-cell-pictures");
+    let built = build(
+        &model,
+        &options(json!({ "folder": "scene/p", "oneCell": true, "textures": { "mode": "keep" } })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(built.report.one_cell);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_model_kept_whole_without_textures_is_one_cell_too() {
+    let dir = temp("one-cell-plain");
+    let built = build(
+        &model(vec![ground(100, &[])]),
+        &options(json!({
+            "folder": "scene/plain",
+            "cellTriangles": 5000,
+            "oneCell": true,
+            "levels": [{ "ratio": 0.01, "error": 0.001 }],
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert!(built.report.one_cell);
+    assert_eq!(built.report.cells, 1);
+    // Its coarser levels are still made.
+    assert!(built.report.levels.len() > 1, "{:?}", built.report.levels);
+    assert_eq!(built.report.cell_size, 100.0);
+    // Its coarser level keeps as close to it as the cut model's cells (the
+    // error, not the ratio, says how far it goes): no fewer triangles than
+    // theirs, all together, give or take.
+    let cut = build(
+        &model(vec![ground(100, &[])]),
+        &options(json!({
+            "folder": "scene/plain-cut",
+            "cellTriangles": 5000,
+            "levels": [{ "ratio": 0.01, "error": 0.001 }],
+        })),
+        &dir,
+        &mut quiet(),
+    )
+    .unwrap();
+    assert_eq!(built.report.levels.len(), 2);
+    for (whole, cut) in built.report.levels.iter().zip(&cut.report.levels).skip(1) {
+        assert!(
+            whole.triangles as f64 >= 0.8 * cut.triangles as f64,
+            "level {}: {} kept whole, {} cut",
+            whole.level,
+            whole.triangles,
+            cut.triangles
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -926,7 +926,10 @@ function sceneModels(
 /**
  * Builds the model kept in `build` as `request` says (its addresses left
  * out), keeping the original model with the build for the save to keep
- * with the game: the scene the importer gets, or why there is none.
+ * with the game: the scene the importer gets, or why there is none. A
+ * model from a site is one small finished model, so it is kept whole, as
+ * one cell (each picture in it once), when it is small enough, as the
+ * site's own viewer loads it.
  */
 async function builtScene(
   tiles: Pick<NonNullable<typeof desktop>['tiles'], 'buildScene'>,
@@ -934,7 +937,7 @@ async function builtScene(
   request: SceneModelRequest,
 ): Promise<SceneModel> {
   const { url: _url, pieces: _pieces, model: _model, ...how } = request;
-  const built = await tiles.buildScene(build, { ...how, keepModel: true });
+  const built = await tiles.buildScene(build, { ...how, keepModel: true, oneCell: true });
   if (!built.ok || !built.rendered) {
     const problem = (['format', 'size', 'missing'] as const).find((p) => p === built.problem);
     return {

@@ -355,6 +355,11 @@ pub struct BuildRequest {
     /// is let go once built.
     #[serde(default)]
     pub keep_model: bool,
+    /// Keeps a small model whole, as one cell, so the 3D view loads it as
+    /// one piece with each picture once (the builder's `oneCell`); a model
+    /// too large for that is cut into cells, with a warning.
+    #[serde(default)]
+    pub one_cell: bool,
 }
 
 /// What building a kept model gave, as the web app reads it: the scene and
@@ -427,6 +432,9 @@ pub fn options_of(request: &BuildRequest) -> Result<atlas_scene::Options, String
     }
     if let Some(sky) = &request.sky {
         options["sky"] = serde_json::json!(sky);
+    }
+    if request.one_cell {
+        options["oneCell"] = serde_json::json!(true);
     }
     serde_json::from_value(options)
         .map_err(|error| format!("The model cannot be built so: {error}"))
@@ -774,6 +782,34 @@ mod tests {
             discard(&builds, &[name.clone(), b.clone(), "../x".to_owned()]);
             assert!(!build_dir(&builds, &name).exists());
         }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    #[test]
+    fn a_model_from_a_site_is_kept_whole_when_the_request_asks() {
+        let request: BuildRequest = serde_json::from_value(serde_json::json!({
+            "folder": "east",
+            "textures": "keep",
+            "keepModel": true,
+            "oneCell": true,
+        }))
+        .unwrap();
+        assert!(request.one_cell);
+        assert!(options_of(&request).unwrap().one_cell);
+        let plain: BuildRequest =
+            serde_json::from_value(serde_json::json!({ "folder": "east" })).unwrap();
+        assert!(!options_of(&plain).unwrap().one_cell);
+
+        let dir = TempDir::new("scene-builds-one-cell");
+        let builds = dir.0.join(BUILDS_DIR);
+        let name = new_name();
+        std::fs::create_dir_all(build_dir(&builds, &name)).unwrap();
+        std::fs::write(build_dir(&builds, &name).join(MODEL_FILE), square_glb()).unwrap();
+        let built = build_scene(&builds, &name, &request);
+        assert!(built.ok, "{built:?}");
+        assert_eq!(built.scene.unwrap()["cells"].as_array().unwrap().len(), 1);
+        assert!(built.warnings.is_empty(), "{:?}", built.warnings);
+        discard(&builds, &[name]);
     }
 
     /// A made-up game's folder that keeps `model` as the original model of `folder`.

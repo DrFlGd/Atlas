@@ -27,7 +27,9 @@
 //!   finest file grows too heavy with pictures, the builder makes its cells
 //!   smaller (when it chooses their size) until each cell's pictures come to
 //!   at most [`TextureOptions::cell_bytes`] (64 MB when not given) or the
-//!   cells reach [`MIN_TEXTURED_CELL`] a side.
+//!   cells reach [`MIN_TEXTURED_CELL`] a side. A model kept whole
+//!   ([`crate::Options::one_cell`]) is one cell, so each picture is in
+//!   each of its files once.
 //!
 //! A later step may write the pictures as KTX2 with Basis Universal
 //! (`KHR_texture_basisu`, which Atlas reads already): [`encode`] is where
