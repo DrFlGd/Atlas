@@ -1,15 +1,31 @@
 //! Writing one model file of a cell: a glTF 2.0 binary file (`.glb`) with one
 //! node, one mesh and one primitive per material, all sharing one vertex
 //! buffer: positions (32-bit floats), normals (8-bit, with
-//! `KHR_mesh_quantization`) and, when the model has them, vertex colours
-//! (16-bit). With `compress`, every buffer view is written with
+//! `KHR_mesh_quantization`), when the model has them, vertex colours
+//! (16-bit), and, when textures are kept, texture coordinates (32-bit
+//! floats, `TEXCOORD_0`) with each picture once in the file (PNG or JPEG,
+//! see [`crate::textures`]). With `compress`, every buffer view of vertices
+//! and triangles is written with
 //! `EXT_meshopt_compression` (vertex codec version 0 and index codec
 //! version 1, as that extension reads them), and the file needs the meshopt
 //! decoder that Atlas carries.
 
+use std::sync::Arc;
+
 use serde_json::{json, Value};
 
-use crate::gltf::Material;
+use crate::gltf::{AlphaMode, Material};
+use crate::textures::Encoded;
+
+/// The triangles of one material, with its picture when its texture is kept.
+pub struct GlbPrimitive {
+    pub material: Material,
+    /// The picture of its base colour texture, read with `TEXCOORD_0`
+    /// and the material's texture's wrap.
+    pub texture: Option<Arc<Encoded>>,
+    /// Three indices per triangle.
+    pub indices: Vec<u32>,
+}
 
 /// The vertices of a cell at one level, and its triangles by material.
 pub struct GlbMesh<'a> {
@@ -19,8 +35,19 @@ pub struct GlbMesh<'a> {
     pub normals: Vec<[f32; 3]>,
     /// Linear RGBA, when the model has vertex colours.
     pub colors: Option<Vec<[f32; 4]>>,
-    /// (material, three indices per triangle), each material once.
-    pub primitives: Vec<(Material, Vec<u32>)>,
+    /// Texture coordinates, when textures are kept.
+    pub uvs: Option<Vec<[f32; 2]>>,
+    /// Each material once.
+    pub primitives: Vec<GlbPrimitive>,
+}
+
+/// What [`write_glb`] wrote.
+pub struct Written {
+    pub bytes: Vec<u8>,
+    pub triangles: usize,
+    /// The pictures in the file, and their bytes.
+    pub pictures: usize,
+    pub texture_bytes: u64,
 }
 
 #[repr(C)]
@@ -32,6 +59,9 @@ struct Normal([i8; 4]);
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Color([u16; 4]);
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Uv([f32; 2]);
 
 const FLOAT: u32 = 5126;
 const BYTE: u32 = 5120;
@@ -82,17 +112,14 @@ struct View {
     target: u32,
 }
 
-/// Writes the mesh as a `.glb` file; returns its bytes and its triangles.
-pub fn write_glb(
-    mesh: GlbMesh<'_>,
-    compress: bool,
-    generator: &str,
-) -> Result<(Vec<u8>, usize), String> {
+/// Writes the mesh as a `.glb` file: its bytes, its triangles and the bytes of its pictures.
+pub fn write_glb(mesh: GlbMesh<'_>, compress: bool, generator: &str) -> Result<Written, String> {
     let GlbMesh {
         name,
         positions,
         normals,
         colors,
+        uvs,
         mut primitives,
     } = mesh;
     let vertex_count = positions.len();
@@ -100,7 +127,7 @@ pub fn write_glb(
     // primitive's triangles in the order a GPU's vertex cache likes.
     let all: Vec<u32> = primitives
         .iter()
-        .flat_map(|(_, i)| i.iter().copied())
+        .flat_map(|p| p.indices.iter().copied())
         .collect();
     // (meshopt's own remap call cuts its table short, so the order is made here.)
     let mut remap = vec![u32::MAX; vertex_count];
@@ -115,6 +142,7 @@ pub fn write_glb(
     let mut new_positions = vec![Position::default(); used];
     let mut new_normals = vec![Normal::default(); used];
     let mut new_colors = colors.as_ref().map(|_| vec![Color::default(); used]);
+    let mut new_uvs = uvs.as_ref().map(|_| vec![Uv::default(); used]);
     for (old, &new) in remap.iter().enumerate() {
         if new == u32::MAX {
             continue;
@@ -126,12 +154,15 @@ pub fn write_glb(
         if let (Some(out), Some(colors)) = (new_colors.as_mut(), colors.as_ref()) {
             out[new] = Color(colors[old].map(unorm16));
         }
+        if let (Some(out), Some(uvs)) = (new_uvs.as_mut(), uvs.as_ref()) {
+            out[new] = Uv(uvs[old]);
+        }
     }
-    for (_, indices) in &mut primitives {
-        for index in indices.iter_mut() {
+    for primitive in &mut primitives {
+        for index in primitive.indices.iter_mut() {
             *index = remap[*index as usize];
         }
-        meshopt::optimize_vertex_cache_in_place(indices, used);
+        meshopt::optimize_vertex_cache_in_place(&mut primitive.indices, used);
     }
 
     let mut min = [f32::INFINITY; 3];
@@ -186,16 +217,36 @@ pub fn write_glb(
             target: ARRAY_BUFFER,
         });
         accessors.push(json!({
-            "bufferView": 2, "componentType": UNSIGNED_SHORT, "normalized": true, "count": used, "type": "VEC4",
+            "bufferView": views.len() - 1, "componentType": UNSIGNED_SHORT, "normalized": true, "count": used, "type": "VEC4",
         }));
-        attributes["COLOR_0"] = json!(2);
+        attributes["COLOR_0"] = json!(accessors.len() - 1);
+    }
+    if let Some(uvs) = &new_uvs {
+        let uv_bytes = as_bytes(uvs);
+        let encoded = encode_vertices(uvs, compress)?;
+        views.push(View {
+            bytes: uv_bytes,
+            encoded,
+            stride: 8,
+            count: used,
+            target: ARRAY_BUFFER,
+        });
+        accessors.push(json!({
+            "bufferView": views.len() - 1, "componentType": FLOAT, "count": used, "type": "VEC2",
+        }));
+        attributes["TEXCOORD_0"] = json!(accessors.len() - 1);
     }
 
     let wide = used > 65535;
     let mut triangles = 0;
     let mut materials: Vec<Value> = Vec::new();
     let mut gltf_primitives: Vec<Value> = Vec::new();
-    for (material, indices) in &primitives {
+    // Pictures (each once in the file), samplers (each wrap once) and textures (each pair once).
+    let mut pictures: Vec<Arc<Encoded>> = Vec::new();
+    let mut samplers: Vec<[u32; 2]> = Vec::new();
+    let mut textures: Vec<(usize, usize)> = Vec::new();
+    for primitive in &primitives {
+        let (material, indices) = (&primitive.material, &primitive.indices);
         if indices.is_empty() {
             continue;
         }
@@ -239,6 +290,40 @@ pub fn write_glb(
         }
         if material.double_sided {
             m["doubleSided"] = json!(true);
+        }
+        if let (Some(picture), Some(texture), true) =
+            (&primitive.texture, material.texture, new_uvs.is_some())
+        {
+            let image = match pictures.iter().position(|p| Arc::ptr_eq(p, picture)) {
+                Some(at) => at,
+                None => {
+                    pictures.push(picture.clone());
+                    pictures.len() - 1
+                }
+            };
+            let sampler = match samplers.iter().position(|w| *w == texture.wrap) {
+                Some(at) => at,
+                None => {
+                    samplers.push(texture.wrap);
+                    samplers.len() - 1
+                }
+            };
+            let index = match textures.iter().position(|t| *t == (image, sampler)) {
+                Some(at) => at,
+                None => {
+                    textures.push((image, sampler));
+                    textures.len() - 1
+                }
+            };
+            m["pbrMetallicRoughness"]["baseColorTexture"] = json!({ "index": index });
+            match material.alpha_mode {
+                AlphaMode::Opaque => {}
+                AlphaMode::Mask(cutoff) => {
+                    m["alphaMode"] = json!("MASK");
+                    m["alphaCutoff"] = json!(cutoff);
+                }
+                AlphaMode::Blend => m["alphaMode"] = json!("BLEND"),
+            }
         }
         materials.push(m);
         gltf_primitives.push(json!({
@@ -286,6 +371,18 @@ pub fn write_glb(
         bin.resize(pad4(bin.len()), 0);
         buffer_views.push(entry);
     }
+    // The pictures, plain (they are compressed already).
+    let mut images: Vec<Value> = Vec::new();
+    let mut texture_bytes = 0u64;
+    for picture in &pictures {
+        buffer_views.push(json!({
+            "buffer": 0, "byteOffset": bin.len(), "byteLength": picture.bytes.len(),
+        }));
+        bin.extend_from_slice(&picture.bytes);
+        bin.resize(pad4(bin.len()), 0);
+        texture_bytes += picture.bytes.len() as u64;
+        images.push(json!({ "bufferView": buffer_views.len() - 1, "mimeType": picture.mime }));
+    }
     let mut buffers = vec![json!({ "byteLength": bin.len() })];
     let mut used_extensions = vec!["KHR_mesh_quantization"];
     if compress {
@@ -295,7 +392,7 @@ pub fn write_glb(
         }));
         used_extensions.push("EXT_meshopt_compression");
     }
-    let document = json!({
+    let mut document = json!({
         "asset": { "version": "2.0", "generator": generator },
         "extensionsUsed": used_extensions,
         "extensionsRequired": used_extensions,
@@ -308,6 +405,17 @@ pub fn write_glb(
         "bufferViews": buffer_views,
         "buffers": buffers,
     });
+    if !images.is_empty() {
+        document["images"] = json!(images);
+        document["samplers"] = json!(samplers
+            .iter()
+            .map(|[s, t]| json!({ "magFilter": 9729, "minFilter": 9987, "wrapS": s, "wrapT": t }))
+            .collect::<Vec<_>>());
+        document["textures"] = json!(textures
+            .iter()
+            .map(|(source, sampler)| json!({ "source": source, "sampler": sampler }))
+            .collect::<Vec<_>>());
+    }
     let mut json_bytes = serde_json::to_vec(&document).map_err(|error| error.to_string())?;
     json_bytes.resize(pad4(json_bytes.len()), b' ');
     let total = 12 + 8 + json_bytes.len() + 8 + bin.len();
@@ -321,5 +429,10 @@ pub fn write_glb(
     out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
     out.extend_from_slice(b"BIN\0");
     out.extend_from_slice(&bin);
-    Ok((out, triangles))
+    Ok(Written {
+        bytes: out,
+        triangles,
+        pictures: pictures.len(),
+        texture_bytes,
+    })
 }

@@ -55,7 +55,7 @@ CATEGORIES = (
     ("souls", "items", "Souls", "coin", "#c9b37e", True, False),
 )
 ITEM_CATEGORIES = {c[0] for c in CATEGORIES if c[1] == "items"}
-KIND_LETTER = {"weapon": "w", "armour": "a", "ring": "r", "goods": "g"}
+KIND_LETTER = {"weapon": "w", "armour": "a", "ring": "r", "goods": "g", "gem": "j"}
 
 
 @dataclass
@@ -138,13 +138,22 @@ CHECKLISTS = (
 )
 
 
-def checklist(pack_id: str, order: int) -> dict[str, tp.Any]:
+def checklist(pack_id: str, order: int, names: dict[str, tp.Any] | None = None) -> dict[str, tp.Any]:
+    """Checklist `order` of CHECKLISTS; `names` (the config's `checklistNames`) can give it another name and
+    description in a game: `{list key: [name, description]}`."""
     list_key, name, description = CHECKLISTS[order]
+    other = (names or {}).get(list_key)
+    if isinstance(other, list) and len(other) == 2 and all(isinstance(v, str) and v for v in other):
+        name, description = other
     return {"id": f"{pack_id}:checklist:{list_key}", "name": name, "description": description, "order": order, "kind": "checklist"}
 
 
-def category_lists(pack_id: str, used: set[str]) -> tuple[list[dict[str, tp.Any]], list[dict[str, tp.Any]]]:
-    """The category groups and categories of the categories `used` (by their short ids), in Atlas's order."""
+def category_lists(
+    pack_id: str, used: set[str], names: dict[str, tp.Any] | None = None
+) -> tuple[list[dict[str, tp.Any]], list[dict[str, tp.Any]]]:
+    """The category groups and categories of the categories `used` (by their short ids), in Atlas's order. `names`
+    (the config's `categoryNames`) can give a category another name in a game (Bloodborne's lamps)."""
+    names = {k: v for k, v in (names or {}).items() if isinstance(v, str) and v and not k.startswith("$")}
     groups_used = {c[1] for c in CATEGORIES if c[0] in used}
     groups = [
         {"id": f"{pack_id}:catgroup:{gid}", "name": name, "order": order} for gid, name, order in GROUPS if gid in groups_used
@@ -153,7 +162,7 @@ def category_lists(pack_id: str, used: set[str]) -> tuple[list[dict[str, tp.Any]
         {
             "id": f"{pack_id}:cat:{cid}",
             "groupId": f"{pack_id}:catgroup:{group}",
-            "name": name,
+            "name": names.get(cid, name),
             "icon": icon,
             "color": colour,
             "trackable": trackable,
@@ -183,7 +192,11 @@ def build_pack(
     areas: list[AreaOut],
     content: GameContent,
     created: str | None = None,
+    labels: dict[str, tp.Any] | None = None,
 ) -> dict[str, tp.Any]:
+    """The pack's JSON. `labels` is the game's config, for its `categoryNames` and `checklistNames`."""
+    labels = labels or {}
+
     def ident(kind: str, local: str) -> str:
         return f"{pack_id}:{kind}:{local}"
 
@@ -315,7 +328,7 @@ def build_pack(
             if marker.category == "key":
                 lists["keys"].append((area.name, name, location_id))
 
-    category_groups, categories = category_lists(pack_id, set(used_categories))
+    category_groups, categories = category_lists(pack_id, set(used_categories), labels.get("categoryNames"))
 
     checklists, checklist_items = [], []
     for order, (list_key, name, description) in enumerate(CHECKLISTS):
@@ -323,7 +336,7 @@ def build_pack(
         if not entries:
             continue
         list_id = ident("checklist", list_key)
-        checklists.append(checklist(pack_id, order))
+        checklists.append(checklist(pack_id, order, labels.get("checklistNames")))
         for number, (section, item_name, location_id) in enumerate(entries):
             checklist_items.append(
                 {
@@ -537,6 +550,7 @@ def merge_area(old: dict[str, tp.Any], part: dict[str, tp.Any], pack_id: str, ke
     # Checklists: per list, the area's entries replaced where they were.
     checklists, items = [], []
     old_lists = {c.get("id"): c for c in old["checklists"] if isinstance(c, dict)}
+    new_lists = {c.get("id"): c for c in part["checklists"] if isinstance(c, dict)}
     for order, (list_key, _, _) in enumerate(CHECKLISTS):
         list_id = f"{pack_id}:checklist:{list_key}"
         old_items = [i for i in old["checklistItems"] if isinstance(i, dict) and i.get("checklistId") == list_id]
@@ -557,7 +571,7 @@ def merge_area(old: dict[str, tp.Any], part: dict[str, tp.Any], pack_id: str, ke
             renamed.append({**item, "id": item_id})
         spliced = [{**item, "order": n} for n, item in enumerate(_splice(old_items, renamed, belongs))]
         if spliced:
-            checklists.append(old_lists.get(list_id) or checklist(pack_id, order))
+            checklists.append(old_lists.get(list_id) or new_lists.get(list_id) or checklist(pack_id, order))
             items.extend(spliced)
     merged["checklists"] = checklists
     merged["checklistItems"] = items

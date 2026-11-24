@@ -855,6 +855,32 @@ pub async fn import_build_scene<R: Runtime>(
     }
 }
 
+/// Makes a build of the original model a game keeps for its map `folder`
+/// (see `scenebuilds::reuse_kept_model`), for "Build again from saved
+/// pages": its name, for `import_build_scene`, or none when the game keeps
+/// no model for that map. Nothing is fetched.
+#[cfg(feature = "downloads")]
+#[tauri::command]
+pub async fn import_reuse_model<R: Runtime>(
+    window: WebviewWindow<R>,
+    library: LibraryState<'_>,
+    pack_id: String,
+    folder: String,
+) -> Result<Option<String>, String> {
+    if window.label() != crate::MAIN_WINDOW {
+        return Err("Only the app's own window can read pages.".to_owned());
+    }
+    let Some(pack) = library.pack_folder(&pack_id) else {
+        return Ok(None);
+    };
+    let builds = scene_builds(&library);
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::scenebuilds::reuse_kept_model(&builds, &pack, &folder)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// Throws away models and builds no saved import named.
 #[cfg(feature = "downloads")]
 #[tauri::command]

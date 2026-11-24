@@ -91,7 +91,9 @@ def parser() -> argparse.ArgumentParser:
         help=f"seconds of silence before a 'still reading' progress line (default {worker.HEARTBEAT:g})",
     )
     make = commands.add_parser("make", help="make an Atlas map pack from the game files, and a report")
-    make.add_argument("folder", type=Path, help="the game folder (Dark Souls Remastered install)")
+    make.add_argument(
+        "folder", type=Path, help="the game folder (Dark Souls Remastered install, or a Bloodborne 1.09 dump)"
+    )
     make.add_argument("--out", type=Path, required=True, help="where to write report.json, previews/ and the zip")
     make.add_argument(
         "--maps-folder",
@@ -122,6 +124,14 @@ def parser() -> argparse.ArgumentParser:
         metavar="STYLE",
         help="how the floors are drawn: shaded (by height, the default) or outlines (by height, with the walls and "
         "the edges of the walkable floor as clear lines); textured and textured-outlines are not available yet",
+    )
+    make.add_argument(
+        "--floor-method",
+        default=None,
+        choices=("passages", "cuts"),
+        help="how floors are found: passages (automatic passages: whole ground, split only where one walkable "
+        "surface lies over another) or cuts (cut heights); an area's own choice in the floor overrides wins; "
+        "the default is the game's config",
     )
     make.add_argument("--no-3d", action="store_true", help="make the flat maps only, without their 3D models")
     make.add_argument(
@@ -238,6 +248,7 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
             floor_overrides_file=args.floor_overrides,
             remake=args.remake,
             style=args.map_style,
+            floor_method=args.floor_method,
         ).run()
     except Cancelled:
         events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")

@@ -43,14 +43,48 @@ def floor_overrides(config: dict[str, tp.Any], area_id: str) -> dict[str, tp.Any
 MAX_CUTS = 32
 MAX_NAMES = 33
 MAX_NAME = 80
+MAX_PASSAGES = 256
+FLOOR_METHODS = ("passages", "cuts")
+# The floor cuts file (floor-overrides.json): version 2 adds `version`, and per area `method` and `passages`.
+# Version 1 files (no `version`) still load.
+FLOOR_OVERRIDES_VERSION = 2
+
+
+def floor_method(config: dict[str, tp.Any], overrides: dict[str, tp.Any] | None = None, asked: str | None = None) -> str:
+    """How an area's floors are found: the area's own choice (its floor overrides' `method`), else the one asked
+    for this make, else the config's (`floors.method`), else cuts."""
+    for value in ((overrides or {}).get("method"), asked, (config.get("floors") or {}).get("method")):
+        if value in FLOOR_METHODS:
+            return str(value)
+    return "cuts"
+
+
+def _number(value: tp.Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and abs(float(value)) < 100_000:
+        return float(value)
+    return None
 
 
 def clean_floor_entry(value: tp.Any) -> dict[str, tp.Any] | None:
-    """One area's floor overrides as the player's own file gives them, kept to what floors.py reads: `cuts`,
-    `splitAt` and `mergeAt` (heights in metres) and `names` (lowest first). None when nothing usable is left."""
+    """One area's floor overrides as the player's own file gives them, kept to what floors.py and passages.py read:
+    `cuts`, `splitAt` and `mergeAt` (heights in metres), `names` (lowest first), `method` (passages or cuts) and
+    `passages` (`[{x, z, show}]`: which storey to show on the main floor, upper or lower, in the overlapping place
+    at x, z). None when nothing usable is left."""
     if not isinstance(value, dict):
         return None
     entry: dict[str, tp.Any] = {}
+    if value.get("method") in FLOOR_METHODS:
+        entry["method"] = value["method"]
+    passages = value.get("passages")
+    if isinstance(passages, list):
+        kept_passages = []
+        for item in passages[:MAX_PASSAGES]:
+            if not isinstance(item, dict) or item.get("show") not in ("upper", "lower"):
+                continue
+            x, z = _number(item.get("x")), _number(item.get("z"))
+            if x is not None and z is not None:
+                kept_passages.append({"x": round(x, 2), "z": round(z, 2), "show": item["show"]})
+        entry["passages"] = kept_passages
     for key in ("cuts", "splitAt", "mergeAt"):
         heights = value.get(key)
         if isinstance(heights, list):

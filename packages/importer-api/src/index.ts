@@ -67,8 +67,10 @@ import {
   type SiteTrialRequest,
 } from './siteTrial';
 import type { SiteInfo, SiteLicence } from './sites';
+import { GAME_FILES_KIND_PATTERN, type GameFilesImport } from './gameFiles';
 
 export * from './fetching';
+export * from './gameFiles';
 export * from './gameLists';
 export * from './layoutNotes';
 export * from './pageValues';
@@ -409,6 +411,13 @@ export interface ImportContext {
    * Nothing is written into a pack until the importer names the build in
    * {@link ImportSuccess.sceneBuilds} and the pack is saved; a build no
    * saved pack names is thrown away.
+   *
+   * The original model is kept with the saved game, beside its saved
+   * pages (never in a pack file), in place of the one kept before for the
+   * same `folder`. In a game built again ({@link ImportContext.rebuild})
+   * the app fetches nothing: it builds the map from the model the game
+   * keeps for `folder`, as the rest of the request says now (its addresses
+   * unused), and answers `missing` for a map whose model is not kept.
    */
   sceneModel?(request: SceneModelRequest): Promise<SceneModel>;
 }
@@ -753,10 +762,29 @@ export interface SceneModelRequest {
    */
   url?: string;
   /**
+   * Or the model itself, a glTF binary file the importer made on this
+   * computer from the game's own files: only for a game files build
+   * ({@link GameFilesContext.sceneModel}), never for a page read. At most
+   * {@link SCENE_MODEL_MAX_BYTES}.
+   */
+  model?: Uint8Array;
+  /**
+   * `keep`: the builder keeps the model's textures (each at its own size
+   * and fidelity in the finest level of detail, smaller copies in the
+   * coarser ones). Absent or `average`: each texture's average colour, as
+   * before.
+   */
+  textures?: 'average' | 'keep';
+  /**
+   * With `keep`: the longest side of a picture in the finest level, a
+   * power of two from 16 to 8192. Absent: each picture keeps its own size.
+   */
+  textureSize?: number;
+  /**
    * Or the model in pieces: each address a JSON file whose value at `field`
    * (a field name of its top object) is text in base64, the pieces' texts
    * joined in this order being the base64 of the model. At most
-   * {@link SCENE_MODEL_MAX_PIECES}. Exactly one of `url` and `pieces`.
+   * {@link SCENE_MODEL_MAX_PIECES}. Exactly one of `url`, `pieces` and `model`.
    */
   pieces?: { urls: string[]; field: string };
   /**
@@ -890,15 +918,43 @@ export function sceneBuildsOf(value: unknown, pack: PackData): SceneBuildUse[] {
 export function checkSceneModelRequest(value: unknown): SceneModelRequest | string {
   if (typeof value !== 'object' || value === null) return 'The request is not one.';
   const request = value as Record<string, unknown>;
-  const { url, pieces, folder, axes, scale, offset, drop, water, sky, floors } = request;
+  const { url, pieces, model, folder, axes, scale, offset, drop, water, sky, floors } = request;
+  const { textures, textureSize } = request;
   if (typeof folder !== 'string' || !SCENE_FOLDER_PATTERN.test(folder)) {
     return 'The map’s folder is not one this app takes.';
   }
   const out: SceneModelRequest = { folder };
-  if ((url === undefined) === (pieces === undefined)) {
-    return 'The model must be one file or its pieces.';
+  if ([url, pieces, model].filter((given) => given !== undefined).length !== 1) {
+    return 'The model must be one file, its pieces, or the model itself.';
   }
-  if (url !== undefined) {
+  if (textures !== undefined) {
+    if (textures !== 'average' && textures !== 'keep') {
+      return 'The textures must be kept or averaged.';
+    }
+    out.textures = textures;
+  }
+  if (textureSize !== undefined) {
+    if (
+      typeof textureSize !== 'number' ||
+      !Number.isInteger(textureSize) ||
+      textureSize < 16 ||
+      textureSize > 8192 ||
+      (textureSize & (textureSize - 1)) !== 0
+    ) {
+      return 'The texture size must be a power of two from 16 to 8192.';
+    }
+    out.textureSize = textureSize;
+  }
+  if (model !== undefined) {
+    if (!(model instanceof Uint8Array) || model.byteLength < 20) {
+      return 'The model is not a glTF binary file.';
+    }
+    if (model.byteLength > SCENE_MODEL_MAX_BYTES) return 'The model is larger than this app takes.';
+    if (String.fromCharCode(model[0]!, model[1]!, model[2]!, model[3]!) !== 'glTF') {
+      return 'The model is not a glTF binary file.';
+    }
+    out.model = model;
+  } else if (url !== undefined) {
     if (typeof url !== 'string' || !isAllowedPageUrl(url))
       return 'This app does not read that address.';
     out.url = url;
@@ -1819,6 +1875,14 @@ export interface AtlasImporter {
    */
   picturesWithPages?: boolean;
   /**
+   * Optional: making 3D maps from a game's own files on the person's
+   * computer (see `gameFiles.ts`). An importer with it may read no pages
+   * at all ({@link pageReader} and {@link fetch} are then not needed, and
+   * {@link matches} answers `false`). Only a desktop app that downloads
+   * offers it.
+   */
+  gameFiles?: GameFilesImport;
+  /**
    * Optional: the importer reads sites by site rules files (see
    * `siteRules.ts` and the guide beside the schema in this package): the
    * files it comes with, and those the person adds and switches on. An app
@@ -2014,6 +2078,22 @@ export const importerSchema = z
     catalogues: z.custom<NonNullable<AtlasImporter['catalogues']>>(isFunction).optional(),
     refreshesBundledGames: z.boolean().optional(),
     picturesWithPages: z.boolean().optional(),
+    gameFiles: z
+      .object({
+        kinds: z
+          .array(
+            z.object({
+              id: z.string().regex(GAME_FILES_KIND_PATTERN),
+              title: z.string().trim().min(1).max(100),
+              description: z.string().trim().min(1).max(500),
+            }),
+          )
+          .min(1)
+          .max(20),
+        survey: z.custom<GameFilesImport['survey']>(isFunction, 'must be a function'),
+        build: z.custom<GameFilesImport['build']>(isFunction, 'must be a function'),
+      })
+      .optional(),
     sites: z
       .object({
         files: z
@@ -2037,7 +2117,11 @@ export const importerSchema = z
     message: 'an importer with catalogues must also read game pages',
     path: ['catalogues'],
   })
-  .refine(readsSomehow, readsSomehowError)
+  // An importer of game files only may read no pages.
+  .refine(
+    (importer) => readsSomehow(importer) || importer.gameFiles !== undefined,
+    readsSomehowError,
+  )
   .refine(readsItsWindows, readsItsWindowsError);
 
 /** Validates a module's default export as an importer, or throws a readable error. */

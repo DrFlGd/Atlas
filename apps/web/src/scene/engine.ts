@@ -22,6 +22,15 @@ import { modelLoader, type ModelLoader } from './loader';
  * drawn together in one buffer, seen through walls (dimmer when hidden);
  * the open route as a line. Floors and the height cut are clipping planes.
  *
+ * Each surface is drawn on the sides its model's material says (glTF's
+ * `doubleSided`; one side, its front, by default), as the game draws it: a
+ * level seen from outside shows no wall that faces away from the camera.
+ * While a cut is on (a floor, the height cut, or the cut toward the
+ * camera), the back of every one-sided surface is drawn too, darkened, so
+ * a model cut open shows its inside as inside rather than as a hole. Files
+ * of the first builder (`Atlas scene builder 0.1`) were made for a view
+ * that drew both sides of everything, so they still are.
+ *
  * It draws only when something changed: the camera, a cell, the dots.
  */
 
@@ -86,6 +95,8 @@ interface Loaded {
   level: number;
   group: THREE.Group;
   meshes: THREE.Mesh[];
+  /** The darkened backs of one-sided surfaces, shown while a cut is on. */
+  insides: THREE.Mesh[];
   triangles: number;
   textureBytes: number;
 }
@@ -188,8 +199,38 @@ function textureBytesOf(texture: THREE.Texture): number {
   return Math.round((image?.width ?? 0) * (image?.height ?? 0) * 4 * (4 / 3));
 }
 
-/** A plain material in place of the model's: lit by the hemisphere, the sun and the camera's light. */
-function lambertOf(material: THREE.Material): THREE.MeshLambertMaterial {
+/** How dark the inside of a cut-open model is: the back of a surface, its colour times this. */
+export const INSIDE_SHADE = 0x3a3a3a;
+
+/** Whether a file was written by the first builder, for a view that drew both sides of everything. */
+export function drawnBothSides(generator: string | undefined): boolean {
+  return (generator ?? '').startsWith('Atlas scene builder 0.1.');
+}
+
+/**
+ * The material of the back of a one-sided surface, shown while a cut is
+ * on: unlit, its texture and colours darkened, its cutout kept.
+ */
+export function insideOf(material: THREE.MeshLambertMaterial): THREE.MeshBasicMaterial {
+  const out = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(INSIDE_SHADE).multiply(material.color),
+    map: material.map,
+    vertexColors: material.vertexColors,
+    side: THREE.BackSide,
+    transparent: material.transparent,
+    opacity: material.opacity,
+    alphaTest: material.alphaTest,
+  });
+  out.name = `${material.name} (inside)`;
+  return out;
+}
+
+/**
+ * A plain material in place of the model's: lit by the hemisphere, the sun
+ * and the camera's light, on the sides the model's material says (both
+ * with `bothSides`).
+ */
+export function lambertOf(material: THREE.Material, bothSides = false): THREE.MeshLambertMaterial {
   // Any material of a model: some have no texture or glow.
   const source = material as Partial<THREE.MeshStandardMaterial> & THREE.Material;
   const out = new THREE.MeshLambertMaterial({
@@ -198,8 +239,8 @@ function lambertOf(material: THREE.Material): THREE.MeshLambertMaterial {
     emissive: source.emissive ?? new THREE.Color(0),
     emissiveMap: source.emissiveMap ?? null,
     vertexColors: source.vertexColors,
-    // Both sides: where a cut opens the model, its inside shows dark rather than see-through.
-    side: THREE.DoubleSide,
+    // The model's own sides: the front only unless it says both.
+    side: bothSides || material.side === THREE.DoubleSide ? THREE.DoubleSide : THREE.FrontSide,
     transparent: source.transparent,
     opacity: source.opacity,
     alphaTest: source.alphaTest,
@@ -212,7 +253,7 @@ function lambertOf(material: THREE.Material): THREE.MeshLambertMaterial {
  * The meshes of a loaded model, merged into one per material (and set of
  * attributes): a cell is drawn in a few calls, whatever its file holds.
  */
-function mergeByMaterial(root: THREE.Object3D): Loaded {
+function mergeByMaterial(root: THREE.Object3D, bothSides = false, cut = false): Loaded {
   root.updateMatrixWorld(true);
   const groups = new Map<string, { material: THREE.Material; parts: THREE.BufferGeometry[] }>();
   const sources = new Set<THREE.BufferGeometry>();
@@ -245,6 +286,7 @@ function mergeByMaterial(root: THREE.Object3D): Loaded {
   const meshes: THREE.Mesh[] = [];
   const textures = new Set<THREE.Texture>();
   const lamberts = new Map<THREE.Material, THREE.MeshLambertMaterial>();
+  const insides: THREE.Mesh[] = [];
   let triangles = 0;
   for (const { material, parts } of groups.values()) {
     // Null when the parts cannot be merged after all: they are drawn apart.
@@ -257,7 +299,7 @@ function mergeByMaterial(root: THREE.Object3D): Loaded {
     }
     let lambert = lamberts.get(material);
     if (!lambert) {
-      lambert = lambertOf(material);
+      lambert = lambertOf(material, bothSides);
       lamberts.set(material, lambert);
       if (lambert.map) textures.add(lambert.map);
       if (lambert.emissiveMap) textures.add(lambert.emissiveMap);
@@ -269,13 +311,20 @@ function mergeByMaterial(root: THREE.Object3D): Loaded {
       mesh.matrixAutoUpdate = false;
       group.add(mesh);
       meshes.push(mesh);
+      if (lambert.side === THREE.FrontSide) {
+        const inside = new THREE.Mesh(geometry, insideOf(lambert));
+        inside.matrixAutoUpdate = false;
+        inside.visible = cut;
+        group.add(inside);
+        insides.push(inside);
+      }
     }
   }
   for (const geometry of sources) geometry.dispose();
   for (const material of materials) material.dispose();
   let textureBytes = 0;
   textures.forEach((texture) => (textureBytes += textureBytesOf(texture)));
-  return { level: -1, group, meshes, triangles, textureBytes };
+  return { level: -1, group, meshes, insides, triangles, textureBytes };
 }
 
 function disposeLoaded(loaded: Loaded): void {
@@ -289,6 +338,7 @@ function disposeLoaded(loaded: Loaded): void {
     material.emissiveMap?.dispose();
     material.dispose();
   }
+  for (const inside of loaded.insides) (inside.material as THREE.Material).dispose();
   loaded.group.removeFromParent();
 }
 
@@ -525,9 +575,19 @@ export class SceneEngine {
   setCut(top: number | null, towardCamera: boolean): void {
     this.topCut = top;
     this.towardCamera = towardCamera;
+    // The insides of cut-open models show only while a cut is on.
+    const cut = this.cutOn();
+    for (const loaded of [...this.cells.map((state) => state.loaded), this.neighbours]) {
+      for (const inside of loaded?.insides ?? []) inside.visible = cut;
+    }
     this.updatePlanes();
     this.paintSky();
     this.writeDotStates();
+  }
+
+  /** Whether a cut is on: a height (a floor's top or the free cut), or the cut toward the camera. */
+  private cutOn(): boolean {
+    return this.topCut !== null || this.towardCamera;
   }
 
   setTheme(dark: boolean): void {
@@ -839,7 +899,11 @@ export class SceneEngine {
     this.report();
     try {
       const gltf = await this.loader.load(this.options.resolveUrl(file));
-      const loaded = mergeByMaterial(gltf.scene);
+      const loaded = mergeByMaterial(
+        gltf.scene,
+        drawnBothSides(gltf.asset.generator),
+        this.cutOn(),
+      );
       loaded.level = level;
       if (this.disposed) {
         disposeLoaded(loaded);
@@ -869,7 +933,11 @@ export class SceneEngine {
   private async loadNeighbours(file: string): Promise<void> {
     try {
       const gltf = await this.loader.load(this.options.resolveUrl(file));
-      const loaded = mergeByMaterial(gltf.scene);
+      const loaded = mergeByMaterial(
+        gltf.scene,
+        drawnBothSides(gltf.asset.generator),
+        this.cutOn(),
+      );
       if (this.disposed) {
         disposeLoaded(loaded);
         return;

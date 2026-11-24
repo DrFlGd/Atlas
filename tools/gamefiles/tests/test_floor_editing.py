@@ -451,3 +451,76 @@ def test_map_styles_draw_outlines_and_refuse_textures(dsr_map_folder: Path, tmp_
     assert refused.value.code == "map-style" and "textures" in str(refused.value)
     report, _ = make(dsr_map_folder, tmp_path / "out", tmp_path / "Maps", only_areas=["m15_01"], style="outlines")
     assert report["options"]["mapStyle"] == "outlines" and area(report, "m15_01")["mapStyle"] == "outlines"
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# Automatic passages in the floor cuts file and the views.
+
+
+def test_floor_cuts_file_version_2_keeps_method_and_passages(tmp_path: Path) -> None:
+    entry = clean_floor_entry(
+        {
+            "method": "passages",
+            "passages": [{"x": 31.234, "z": 28, "show": "lower"}, {"x": 1, "z": 2, "show": "sideways"}, {"x": "a", "z": 1, "show": "upper"}],
+        }
+    )
+    assert entry == {"method": "passages", "passages": [{"x": 31.23, "z": 28.0, "show": "lower"}]}
+    assert clean_floor_entry({"method": "something"}) is None
+    # Version 2 files carry `version`; version 1 files (no `version`) load as before.
+    path = tmp_path / "floor-overrides.json"
+    path.write_text(json.dumps({"version": 2, PACK: {"m15_01": {"method": "cuts", "cuts": [5]}}}), encoding="utf-8")
+    assert load_floor_overrides(path, PACK) == {"m15_01": {"method": "cuts", "cuts": [5.0]}}
+
+
+def test_floor_method_choice() -> None:
+    from atlas_gamefiles.config import floor_method
+
+    config = {"floors": {"method": "passages"}}
+    assert floor_method(config) == "passages"
+    assert floor_method(config, None, "cuts") == "cuts"
+    assert floor_method(config, {"method": "passages"}, "cuts") == "passages"
+    assert floor_method({}) == "cuts"
+
+
+def test_views_of_passages(tmp_path: Path) -> None:
+    """A bridge over a street, in the views: passages come back with their places, each triangle's floor and each
+    side view pixel's floor; choosing Lower there changes them."""
+    mesh = np.array(fixtures.bridge_over_street(), dtype=np.float32)
+    markers = [((30.0, 0.0, 30.0), "consumable"), ((30.0, 8.0, 30.0), "ring")]
+    plan = plan_floors(mesh)
+    save_floor_data(tmp_path, "m99_02", "Made-up Bridge", mesh, plan, markers, None, (0.0, 8.0), {}, 0.4, method="passages")
+    stream = io.StringIO()
+    requests = [
+        {"id": 1, "method": "passages"},
+        {"id": 2, "method": "passages", "passages": [{"x": 30, "z": 30, "show": "lower"}]},
+        {"id": 3, "cuts": [4.0]},
+    ]
+    assert serve(tmp_path, "m99_02", Events(stream), lines=[json.dumps(r) for r in requests]) == 0
+    ready, upper, lower, cuts = [json.loads(line) for line in stream.getvalue().splitlines()]
+    assert ready["method"] == "passages" and ready["navmeshTriangles"] == 0
+    assert upper["method"] == "passages" and len(upper["places"]) == 1 and upper["mainFloor"] == 1
+    assert [m["floor"] for m in upper["markers"]] == [0, 1]
+    assert [m["floor"] for m in lower["markers"]] == [0, 1] and lower["mainFloor"] == 0
+    assert lower["places"][0]["show"] == "lower" and lower["places"][0]["set"] is True
+    floors = np.frombuffer(base64.b64decode(upper["triangleFloors"]), dtype=np.uint8)
+    assert len(floors) == len(mesh) and set(floors.tolist()) <= {0, 1, 255}
+    assert (floors == 0).sum() < (floors == 1).sum()
+    seen = set()
+    for axis in ("x", "z"):
+        pixels = np.frombuffer(base64.b64decode(upper["sectionFloors"][axis]), dtype=np.uint8)
+        assert len(pixels) == ready["section"][axis]["rows"] * ready["section"][axis]["columns"]
+        seen |= set(pixels.tolist())
+    # From the south the street in front hides the passage; from the east it shows.
+    assert {0, 1, 255} == seen
+    assert cuts["method"] == "cuts" and "places" not in cuts
+
+
+def test_version_1_floor_data_still_loads(tmp_path: Path) -> None:
+    mesh = np.array(fixtures.slab(0, 10, 0, 10, 0.0), dtype=np.float32)
+    path = data_file(tmp_path, "m99_03")
+    path.parent.mkdir(parents=True)
+    meta = {"version": 1, "key": "m99_03", "name": "Old", "floors": {}, "colourRange": [0, 1], "shipped": {}, "lowerFloorOpacity": 0.4}
+    np.savez_compressed(path, triangles=mesh, markers=np.zeros((0, 3)), categories=np.zeros(0, dtype="U16"), meta=np.array(json.dumps(meta)))
+    views = AreaViews(path)
+    assert views.ready()["method"] == "cuts"
+    assert views.views([], None, method="passages")["method"] == "passages"

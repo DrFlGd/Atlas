@@ -365,7 +365,62 @@ export interface HeightProfile {
 /** Who set a cut: the Map Maker by itself, the player (Adjust floors), or the Map Maker's settings for the area. */
 export type CutSource = 'automatic' | 'yours' | 'shipped';
 
+/** How an area's floors are found: automatic passages (whole ground, split where one walkable surface lies over
+ * another) or cut heights. */
+export type FloorMethod = 'passages' | 'cuts';
+
+export const FLOOR_METHODS: { id: FloorMethod; label: string }[] = [
+  { id: 'passages', label: 'Automatic passages' },
+  { id: 'cuts', label: 'Cuts' },
+];
+
+export function floorMethodLabel(id: string | undefined | null): string {
+  return FLOOR_METHODS.find((method) => method.id === id)?.label ?? 'Cuts';
+}
+
+/** Which storey the main floor shows in an overlapping place. */
+export type PassageShow = 'upper' | 'lower';
+
+/** The player's choice for an overlapping place, found again by a point in it. */
+export interface PassageChoice {
+  x: number;
+  z: number;
+  show: PassageShow;
+}
+
+/** An overlapping place: where one walkable surface lies over another (passages.py). */
+export interface PassagePlace {
+  id: number;
+  /** A point in it (world x east, z north). */
+  x: number;
+  z: number;
+  /** Square metres seen from above. */
+  area: number;
+  /** How many storeys stack there. */
+  levels: number;
+  /** Its lowest and highest walkable height. */
+  heights: [number, number];
+  show: PassageShow;
+  /** The player chose `show` (otherwise: upper, by default). */
+  set: boolean;
+  sheets: number;
+  /** The floors its storeys are on. */
+  floors: number[];
+}
+
+export interface PassagesReport {
+  sheets: number;
+  levels: number;
+  mainLevel: number;
+  joinsRefused?: number;
+  levelClashes?: number;
+  choicesUsed?: number;
+  places: PassagePlace[];
+}
+
 export interface FloorPlanReport {
+  /** Cuts when none is given (reports from before automatic passages). */
+  method?: FloorMethod;
   cuts: number[];
   cutList?: { height: number; by: CutSource }[];
   automaticCuts?: { height: number; stackedArea: number; slicedArea: number }[];
@@ -377,9 +432,15 @@ export interface FloorPlanReport {
     names?: string[];
     splitAt?: number[];
     mergeAt?: number[];
+    method?: FloorMethod;
+    passages?: PassageChoice[];
   } | null;
   /** The area's floors without the player's own cuts ("Back to automatic"). */
-  shipped?: { cuts: number[]; names: string[] | null };
+  shipped?: { cuts: number[]; names: string[] | null; passages?: PassageChoice[] };
+  /** Automatic passages: the overlapping places and the sheets of ground. */
+  passages?: PassagesReport;
+  /** Automatic passages: the navmesh triangles read, and those kept where collision ground lies under them. */
+  navmesh?: { triangles: number; kept: number; used: boolean };
   /** Cuts given that left a floor with nothing on it, so were dropped. */
   cutsDropped?: number[];
 }
@@ -458,6 +519,8 @@ export interface MakeReport {
     /** The player's own floor cuts file, and the areas that used it. */
     floorOverrides?: { file: string | null; error: string | null; usedFor: string[] };
     mapStyle?: MapStyleId;
+    /** How floors were found where an area does not choose. */
+    floorMethod?: FloorMethod;
   } & Record<string, unknown>;
   /** The area made again last ("Make this area again"). */
   remade?: { area: string; name: string; at: string };
@@ -613,6 +676,15 @@ export function cutSourceText(by: CutSource): string {
 export function cutsLine(area: MadeArea): string | null {
   const plan = area.floorPlan;
   if (!plan || !area.geometry?.used) return null;
+  if (plan.method === 'passages') {
+    const places = plan.passages?.places ?? [];
+    const chosen = places.filter((place) => place.set).length;
+    const where =
+      places.length === 0
+        ? 'nothing overlaps'
+        : `${plural(places.length, 'overlapping place')}${chosen ? `, ${count(chosen)} set by you` : ''}`;
+    return `Automatic passages: ${where}`;
+  }
   const list = plan.cutList ?? plan.cuts.map((height) => ({ height, by: 'automatic' as const }));
   if (list.length === 0) return 'No cut: one floor';
   const parts = list.map((cut) => `${heightText(cut.height)} (${cutSourceText(cut.by)})`);
@@ -636,7 +708,9 @@ export function floorRangeText(floor: MadeFloor): string {
  * changed or cleared since. */
 export function waitingCuts(
   area: MadeArea,
-  saved: { cuts?: number[]; names?: string[] } | undefined,
+  saved:
+    | { cuts?: number[]; names?: string[]; method?: FloorMethod; passages?: PassageChoice[] }
+    | undefined,
   usedOwn: boolean,
 ): boolean {
   if (!canAdjustFloors(area)) return false;
@@ -644,7 +718,12 @@ export function waitingCuts(
   if (!usedOwn) return true;
   const used = area.floorPlan?.overrides;
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
-  return !same(saved.cuts, used?.cuts) || !same(saved.names, used?.names);
+  return (
+    !same(saved.cuts, used?.cuts) ||
+    !same(saved.names, used?.names) ||
+    !same(saved.method, used?.method) ||
+    !same(saved.passages, used?.passages)
+  );
 }
 
 /** Whether Adjust floors can be offered for an area: it was drawn from geometry. */

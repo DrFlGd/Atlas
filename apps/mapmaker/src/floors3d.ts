@@ -3,6 +3,9 @@
  * data), each part in the colour of the floor its height is on (the selected floor bright, the others dimmer), each
  * cut a see-through level plane in the colour of the floor above it, and the area's markers as dots. "Hide what is
  * above this floor" leaves out everything above the selected floor's top cut, so the view looks down into it.
+ * With automatic passages (`triangleFloors`), each walkable triangle is in the colour of its own floor, walls and
+ * slopes grey, there are no cut planes, and "Hide what is above this floor" leaves out the floors above it and
+ * what stands higher than its top; the overlapping places are shown as large white-ringed dots.
  *
  * It is loaded only when the panel shows it (three.js is large). Mouse, touch and keyboard turn and zoom it; it
  * draws only when something changed. Coordinates: three.js x is the game's x (east), y its height, z minus its z
@@ -26,6 +29,12 @@ export interface FloorsSceneState {
   /** The edges of the walls and floors (where the surface bends sharply) as light lines. */
   outlines: boolean;
   looks: readonly MarkerLook[];
+  /** Automatic passages: each triangle's floor (255 for walls and slopes). */
+  triangleFloors?: Uint8Array | null;
+  /** Automatic passages: with hideAbove, the height above which walls and slopes are left out. */
+  clipHeight?: number | null;
+  /** Automatic passages: the overlapping places (x east, y height, z north), the chosen one first in look. */
+  places?: readonly { x: number; y: number; z: number; chosen: boolean }[];
 }
 
 export interface FloorsSceneHover {
@@ -48,10 +57,13 @@ export interface FloorsScene {
 }
 
 const MODEL_VERTEX = /* glsl */ `
+attribute float floorIndex;
 varying vec3 vWorld;
+varying float vFloor;
 void main() {
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorld = world.xyz;
+  vFloor = floorIndex;
   gl_Position = projectionMatrix * viewMatrix * world;
 }
 `;
@@ -63,19 +75,32 @@ uniform vec3 colours[${MAX_CUTS + 1}];
 uniform int selected;
 uniform float clipTop;
 uniform vec3 lightDir;
+uniform int byTriangle;
+uniform int hideFloorsAbove;
 varying vec3 vWorld;
+varying float vFloor;
 void main() {
   if (vWorld.y > clipTop) discard;
   int band = 0;
-  for (int i = 0; i < ${MAX_CUTS}; i++) {
-    if (i >= cutCount) break;
-    if (vWorld.y > cuts[i]) band++;
+  vec3 base;
+  if (byTriangle == 1) {
+    band = vFloor > 254.5 ? -1 : int(vFloor + 0.5);
+    if (hideFloorsAbove == 1 && band > selected) discard;
+    base = vec3(0.54, 0.565, 0.6);
+    for (int i = 0; i <= ${MAX_CUTS}; i++) {
+      if (i == band) base = colours[i];
+    }
+  } else {
+    for (int i = 0; i < ${MAX_CUTS}; i++) {
+      if (i >= cutCount) break;
+      if (vWorld.y > cuts[i]) band++;
+    }
+    base = colours[band];
   }
-  vec3 base = colours[band];
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float up = abs(n.y);
   float light = 0.38 + 0.47 * abs(dot(n, lightDir)) + 0.15 * up;
-  vec3 colour = band == selected ? base : mix(base, vec3(0.46, 0.49, 0.54), 0.62) * 0.72;
+  vec3 colour = (band == selected || band < 0) ? base : mix(base, vec3(0.46, 0.49, 0.54), 0.62) * 0.72;
   colour = mix(colour * 0.78, colour, up);
   gl_FragColor = vec4(colour * light, 1.0);
 }
@@ -164,6 +189,10 @@ export function createFloorsScene(options: {
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const vertexFloors = new Float32Array(positions.length / 3).fill(255);
+  const floorAttribute = new THREE.BufferAttribute(vertexFloors, 1);
+  geometry.setAttribute('floorIndex', floorAttribute);
+  let shownFloors: Uint8Array | null = null;
   geometry.computeBoundingBox();
   const box =
     geometry.boundingBox ?? new THREE.Box3(new THREE.Vector3(), new THREE.Vector3(1, 1, 1));
@@ -189,6 +218,8 @@ export function createFloorsScene(options: {
       selected: { value: 0 },
       clipTop: { value: 1e9 },
       lightDir: { value: new THREE.Vector3(0.45, 0.8, 0.35).normalize() },
+      byTriangle: { value: 0 },
+      hideFloorsAbove: { value: 0 },
     },
   });
   scene.add(new THREE.Mesh(geometry, modelMaterial));
@@ -244,6 +275,40 @@ export function createFloorsScene(options: {
     scene.add(points);
     return points;
   });
+
+  // The overlapping places of automatic passages: large dots, made again when they change.
+  const placeMaterials = [dotMaterial(1, true), dotMaterial(0.45, false)];
+  for (const material of placeMaterials) material.uniforms.size!.value = DOT_SIZE * 1.6;
+  const placePoints = placeMaterials.map((material, i) => {
+    const points = new THREE.Points(new THREE.BufferGeometry(), material);
+    points.renderOrder = 4 + i;
+    points.frustumCulled = false;
+    scene.add(points);
+    return points;
+  });
+  let shownPlaces = '';
+  const makePlaces = (places: FloorsSceneState['places']) => {
+    const list = places ?? [];
+    const key = JSON.stringify(list);
+    if (key === shownPlaces) return;
+    shownPlaces = key;
+    const at = new Float32Array(list.length * 3);
+    const colour = new Float32Array(list.length * 3);
+    const look = new Float32Array(list.length);
+    list.forEach((place, i) => {
+      at.set([place.x, place.y + 0.8, -place.z], i * 3);
+      colour.set(place.chosen ? [1, 0.84, 0.3] : [0.95, 0.95, 0.95], i * 3);
+      look[i] = 2;
+    });
+    const made = new THREE.BufferGeometry();
+    made.setAttribute('position', new THREE.BufferAttribute(at, 3));
+    made.setAttribute('dotColor', new THREE.BufferAttribute(colour, 3));
+    made.setAttribute('look', new THREE.BufferAttribute(look, 1));
+    for (const points of placePoints) {
+      points.geometry.dispose();
+      points.geometry = made;
+    }
+  };
 
   // The cuts' planes, made again when the cuts change.
   const planes = new THREE.Group();
@@ -411,7 +476,27 @@ export function createFloorsScene(options: {
       cuts.forEach((cut, i) => (values[i] = cut));
       uniforms.cutCount!.value = cuts.length;
       uniforms.selected!.value = state.selected;
-      const clipTop = state.hideAbove && state.selected < cuts.length ? cuts[state.selected]! : 1e9;
+      const byTriangle = Boolean(state.triangleFloors);
+      if (state.triangleFloors && state.triangleFloors !== shownFloors) {
+        shownFloors = state.triangleFloors;
+        const floors = state.triangleFloors;
+        for (let t = 0; t < vertexFloors.length / 3; t++) {
+          const value = floors[t] ?? 255;
+          vertexFloors[t * 3] = value;
+          vertexFloors[t * 3 + 1] = value;
+          vertexFloors[t * 3 + 2] = value;
+        }
+        floorAttribute.needsUpdate = true;
+      }
+      uniforms.byTriangle!.value = byTriangle ? 1 : 0;
+      uniforms.hideFloorsAbove!.value = byTriangle && state.hideAbove ? 1 : 0;
+      const clipTop = byTriangle
+        ? state.hideAbove && state.clipHeight !== null && state.clipHeight !== undefined
+          ? state.clipHeight
+          : 1e9
+        : state.hideAbove && state.selected < cuts.length
+          ? cuts[state.selected]!
+          : 1e9;
       uniforms.clipTop!.value = clipTop;
       edgeMaterial.uniforms.clipTop!.value = clipTop;
       showEdges(state.outlines);
@@ -422,7 +507,9 @@ export function createFloorsScene(options: {
       for (let i = 0; i < markers.length; i++) dotLooks[i] = state.looks[i] ?? 0;
       lookAttribute.needsUpdate = true;
       visible = markers.map((marker) => state.showMarkers && marker.y + 0.4 <= clipTop);
-      makePlanes(cuts, clipTop);
+      makePlanes(byTriangle ? [] : cuts, clipTop);
+      makePlaces(byTriangle ? state.places : []);
+      for (const points of placePoints) points.material.uniforms.clipTop!.value = 1e9;
       render();
     },
     resetView,
@@ -445,6 +532,10 @@ export function createFloorsScene(options: {
       edges?.geometry.dispose();
       edgeMaterial.dispose();
       for (const points of dots) points.material.dispose();
+      for (const points of placePoints) {
+        points.geometry.dispose();
+        points.material.dispose();
+      }
       renderer.dispose();
       canvas.remove();
     },

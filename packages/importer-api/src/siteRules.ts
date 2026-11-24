@@ -995,6 +995,8 @@ function rulesPictureMapPartSchema<L extends z.ZodType>(licence: L) {
  * See "Maps that are 3D models" in the guide.
  */
 
+/** What becomes of a 3D model's textures (`models.model.textures`); `keep` when absent. */
+export const MODEL_TEXTURES = ['keep', 'average'] as const;
 /** The axes of a 3D model a file names, as a scene's `axes`. */
 export const MODEL_AXES = ['+x', '-x', '+y', '-y', '+z', '-z'] as const;
 /** Maps one `models.maps` lists at most. */
@@ -1047,6 +1049,20 @@ const modelsSchema = z.strictObject({
     drop: once(text(100), 'pattern').max(MAX_MODEL_DROP).optional(),
     water: dataPath.optional(),
     sky: hexColour.optional(),
+    /**
+     * `keep` (the default): the model's textures are kept, each at its own
+     * size in the finest level of detail; `average`: each textured part
+     * keeps its texture's average colour.
+     */
+    textures: z.enum(MODEL_TEXTURES).optional(),
+    /** With textures kept: the longest side of a texture in the finest level, a power of two. */
+    textureSize: z
+      .number()
+      .int()
+      .min(16)
+      .max(8192)
+      .refine((n) => (n & (n - 1)) === 0, 'must be a power of two, such as 2048')
+      .optional(),
   }),
   floors: z.strictObject({ path: dataPath, min: dataPath, max: dataPath }).optional(),
   types: z.strictObject({

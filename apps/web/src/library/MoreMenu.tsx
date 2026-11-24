@@ -68,6 +68,10 @@ export function MoreMenu({
   const canRebuild = useAtlas((s) =>
     s.config?.importers.some((i) => i.id === listed?.imported?.importerId),
   );
+  // A game with 3D maps, as it is open: built again from the models kept with it.
+  const models = useAtlas(
+    (s) => s.game?.entry.id === id && s.game.pack.data.maps.some((map) => map.scene),
+  );
   const busy = useAtlas((s) => s.library?.busy.includes(id) ?? false);
   // A session of reading pages, or a game built again, is going: nothing is started again meanwhile.
   const reading = useImport((s) => sessionGoing(s.phase) || s.licenceAsk !== null);
@@ -129,7 +133,9 @@ export function MoreMenu({
       id: 'rebuild-pack',
       icon: 'layers',
       title: 'Build again from saved pages',
-      text: 'Makes the game again from the page data kept with it, without visiting the site. Use it after the app was updated. What you found is kept.',
+      text: models
+        ? 'Makes the game again from the page data and the 3D models kept with it, without visiting the site or downloading a model. Use it after the app was updated. What you found is kept.'
+        : 'Makes the game again from the page data kept with it, without visiting the site. Use it after the app was updated. What you found is kept.',
       run: () => void rebuildPack(id),
     });
   }

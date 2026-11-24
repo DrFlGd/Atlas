@@ -7,6 +7,7 @@ import {
   type KeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { ComparePanel } from './Compare';
 import { Floors3D, SectionPicture, TopPicture } from './FloorViews';
 import { MapStyleChoice } from './MapStyleChoice';
 import {
@@ -14,34 +15,46 @@ import {
   canAddCut,
   checkMarker,
   deleteFloor,
-  entryOf,
   floorBands,
+  floorAtPixel,
+  placeSlots,
   floorColour,
+  fromBase64,
   heightTicks,
   lookOf,
   markerTypeText,
+  methodEntry,
   moveCut,
   northText,
   removeCut,
   renameFloor,
+  setShow,
+  showOf,
+  startChoices,
+  startMethod,
   tipPlace,
   roundHeight,
-  sameDraft,
   shippedDraft,
   startDraft,
   suggestedCut,
   walkableBetween,
   type FloorsDraft,
+  type MarkerCheck,
 } from './floors';
 import {
+  FLOOR_METHODS,
   count,
   cutSourceText,
+  floorMethodLabel,
   heightText,
   mapStyleLabel,
   plural,
+  type FloorMethod,
   type HeightProfile,
   type MadeArea,
   type MapStyleId,
+  type PassageChoice,
+  type PassagePlace,
 } from './report';
 import {
   errorText,
@@ -86,7 +99,20 @@ type Lower = '3d' | 'top';
 export function FloorsPanel(props: Props) {
   const { api, area, game, status } = props;
   const [draft, setDraft] = useState<FloorsDraft>(() => startDraft(area));
-  const [baseline, setBaseline] = useState<FloorsDraft>(() => startDraft(area));
+  const [method, setMethod] = useState<FloorMethod>(() => startMethod(area));
+  const [choices, setChoices] = useState<PassageChoice[]>(() => startChoices(area));
+  const [baseline, setBaseline] = useState<string>(() =>
+    JSON.stringify(
+      methodEntry(
+        startMethod(area),
+        startDraft(area),
+        startChoices(area),
+        area.floors?.length ?? 1,
+      ),
+    ),
+  );
+  const [place, setPlace] = useState<number | null>(null);
+  const [comparing, setComparing] = useState(false);
   const [ready, setReady] = useState<FloorViewsReady | null>(null);
   const [views, setViews] = useState<FloorViews | null>(null);
   const [viewsProblem, setViewsProblem] = useState<string | null>(null);
@@ -111,9 +137,8 @@ export function FloorsPanel(props: Props) {
   const low = ready?.heights.low ?? profile?.low ?? 0;
   const high =
     ready?.heights.high ?? (profile && profile.high > profile.low ? profile.high : low + 1);
-  const floorCount = draft.cuts.length + 1;
-  const bands = floorBands(draft.cuts, low, high);
-  const shown = Math.min(selected, floorCount - 1);
+  const passages = method === 'passages';
+  const choicesKey = JSON.stringify(choices);
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -145,10 +170,14 @@ export function FloorsPanel(props: Props) {
   );
 
   // Redraw the views a moment after the cuts or names change; one request at a time, the latest wins.
-  const wanted = useRef({ draft, outlines });
+  const wanted = useRef({ draft, outlines, method, choices });
   useEffect(() => {
-    wanted.current = { draft, outlines };
-  }, [draft, outlines]);
+    wanted.current = { draft, outlines, method, choices };
+  }, [draft, outlines, method, choices]);
+  // What each answer was asked for: with passages, the views are those of these choices only.
+  const [askedKey, setAskedKey] = useState('');
+  // The last views of passages, shown while new ones are drawn.
+  const [passageViews, setPassageViews] = useState<FloorViews | null>(null);
   const inFlight = useRef(false);
   const again = useRef(false);
   const redraw = useCallback(async () => {
@@ -161,14 +190,20 @@ export function FloorsPanel(props: Props) {
     try {
       for (let more = true; more; more = again.current) {
         again.current = false;
-        const asked = entryOf(wanted.current.draft);
+        const now = wanted.current;
+        const cutsAsked = now.draft.cuts.map(roundHeight);
+        const namesAsked = now.draft.names.map((name) => name.trim());
         const answer = await api.floorViewsRequest(
           area.key,
-          asked.cuts ?? [],
-          asked.names ?? [],
-          wanted.current.outlines,
+          now.method === 'cuts' ? cutsAsked : [],
+          namesAsked,
+          now.outlines,
+          now.method,
+          now.method === 'passages' ? now.choices : [],
         );
         setViews(answer);
+        if (answer.method === 'passages') setPassageViews(answer);
+        setAskedKey(`${now.method}|${JSON.stringify(now.choices)}`);
         setViewsProblem(null);
       }
     } catch (error) {
@@ -184,7 +219,7 @@ export function FloorsPanel(props: Props) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [ready, running, draft, outlines, redraw]);
+  }, [ready, running, draft, outlines, method, choicesKey, redraw]);
 
   const change = (next: FloorsDraft) => {
     setDraft(next);
@@ -238,18 +273,60 @@ export function FloorsPanel(props: Props) {
     const made = area.floorPlan?.cutList?.find((entry) => Math.abs(entry.height - cut) < 0.005);
     return made ? cutSourceText(made.by) : 'set by you';
   };
-  const viewed = views?.cuts.join() === draft.cuts.map(roundHeight).join() ? views : null;
+  const viewed = passages
+    ? views?.method === 'passages' && askedKey === `passages|${choicesKey}`
+      ? views
+      : null
+    : views &&
+        views.method !== 'passages' &&
+        views.cuts.join() === draft.cuts.map(roundHeight).join()
+      ? views
+      : null;
+  const floorCount = passages
+    ? Math.max(1, passageViews?.floors.length ?? area.floors?.length ?? 1)
+    : draft.cuts.length + 1;
+  const bands = passages
+    ? Array.from({ length: floorCount }, (_, index) => {
+        const heights = passageViews?.floors[index]?.heights ?? [low, high];
+        return { index, from: heights[0], to: heights[1] };
+      })
+    : floorBands(draft.cuts, low, high);
+  const shown = Math.min(selected, floorCount - 1);
+  const places = useMemo<PassagePlace[]>(() => passageViews?.places ?? [], [passageViews]);
+  const pixelFloors = useMemo(() => {
+    const text = passageViews?.sectionFloors?.[axis];
+    return text ? fromBase64(text) : null;
+  }, [passageViews, axis]);
+  const triangleFloors = useMemo(() => {
+    const text = passageViews?.triangleFloors;
+    return text ? fromBase64(text) : null;
+  }, [passageViews]);
+  const placeDots = useMemo(
+    () => places.map((p) => ({ x: p.x, y: p.heights[1], z: p.z, chosen: p.id === place })),
+    [places, place],
+  );
   const nameOf = (index: number) =>
     draft.names[index]?.trim()
       ? draft.names[index].trim()
-      : (viewed?.floors[index]?.name ?? `Floor ${index + 1}`);
+      : ((passages ? passageViews : viewed)?.floors[index]?.name ?? `Floor ${index + 1}`);
 
   // Each marker for these cuts: its floor, and whether a cut passes within a metre of it.
   const markers = useMemo(() => ready?.markers ?? [], [ready]);
-  const placed = viewed?.markers;
+  const placed = (passages ? passageViews : viewed)?.markers;
   const checks = useMemo(
-    () => markers.map((marker, i) => checkMarker(draft.cuts, marker.y, placed?.[i])),
-    [markers, draft.cuts, placed],
+    () =>
+      markers.map((marker, i): MarkerCheck => {
+        if (!passages) return checkMarker(draft.cuts, marker.y, placed?.[i]);
+        // Passages are not apart in height: a marker is on the floor of the surface under it.
+        const at = placed?.[i];
+        return {
+          floor: at?.floor ?? 0,
+          nearCut: null,
+          otherFloor: false,
+          noSurface: at?.surface === null,
+        };
+      }),
+    [markers, draft.cuts, placed, passages],
   );
   const looks = useMemo(() => checks.map(lookOf), [checks]);
   const nearCount = checks.filter((check) => check.nearCut !== null).length;
@@ -275,11 +352,12 @@ export function FloorsPanel(props: Props) {
   );
   const addable = canAddCut(draft, newCut, low, high);
 
+  const entryNow = methodEntry(method, draft, choices, floorCount);
   const save = async (): Promise<boolean> => {
     setProblem(null);
     try {
-      props.onOverrides(await api.floorOverridesSet(game, area.key, entryOf(draft)));
-      setBaseline(draft);
+      props.onOverrides(await api.floorOverridesSet(game, area.key, entryNow));
+      setBaseline(JSON.stringify(entryNow));
       return true;
     } catch (error) {
       setProblem(errorText(error));
@@ -291,10 +369,14 @@ export function FloorsPanel(props: Props) {
     try {
       props.onOverrides(await api.floorOverridesSet(game, area.key, null));
       const next = shippedDraft(area, ready?.shippedCuts);
+      const nextChoices = [...(area.floorPlan?.shipped?.passages ?? [])];
       setDraft(next);
-      setBaseline(next);
+      setChoices(nextChoices);
+      setBaseline(JSON.stringify(methodEntry(method, next, nextChoices, floorCount)));
       setMessage(
-        'Your cuts for this area are cleared: it has the Map Maker’s own floors again. Press Make this area again to redraw its map.',
+        passages
+          ? 'Your choices for this area are cleared: each overlapping place shows its upper storey again. Press Make this area again to redraw its map.'
+          : 'Your cuts for this area are cleared: it has the Map Maker’s own floors again. Press Make this area again to redraw its map.',
       );
     } catch (error) {
       setProblem(errorText(error));
@@ -308,7 +390,7 @@ export function FloorsPanel(props: Props) {
   const saveFile = async () => {
     setProblem(null);
     try {
-      if (!sameDraft(draft, baseline) && !(await save())) return;
+      if (unsaved && !(await save())) return;
       const file = await api.floorOverridesSaveFile(game);
       if (file)
         setMessage(
@@ -325,10 +407,14 @@ export function FloorsPanel(props: Props) {
       if (!file) return;
       if (file.overrides) props.onOverrides(file.overrides);
       const entry = file.overrides?.[game]?.[area.key];
-      if (entry?.cuts) {
-        const next = { cuts: [...entry.cuts], names: entry.names ?? [] };
+      if (entry) {
+        const nextMethod = entry.method ?? method;
+        const next = { cuts: [...(entry.cuts ?? draft.cuts)], names: entry.names ?? [] };
+        const nextChoices = [...(entry.passages ?? [])];
+        setMethod(nextMethod);
         setDraft(next);
-        setBaseline(next);
+        setChoices(nextChoices);
+        setBaseline(JSON.stringify(methodEntry(nextMethod, next, nextChoices, floorCount)));
       }
       setMessage(
         `Loaded the floor cuts of ${plural(file.areas, 'area')} from ${file.name}. Make map, or Make this area again, uses them.`,
@@ -338,14 +424,28 @@ export function FloorsPanel(props: Props) {
     }
   };
 
-  const unsaved = !sameDraft(draft, baseline);
+  const unsaved = JSON.stringify(entryNow) !== baseline;
+  const choose = (target: PassagePlace, show: 'upper' | 'lower') => {
+    setChoices(setShow(choices, target, show));
+    setPlace(target.id);
+    setMessage(null);
+  };
   const maxBar = Math.max(1, ...(profile?.areas ?? [1]));
   const section = ready?.section[axis] ?? null;
+  const slots = useMemo(() => {
+    if (!section) return [];
+    const across = places.map((p) => ({
+      across: axis === 'x' ? p.x : p.z,
+      low: Math.min(p.heights[0], p.heights[1]),
+      high: Math.max(p.heights[0], p.heights[1]),
+    }));
+    return placeSlots(across, (section.to - section.from) * 0.03);
+  }, [places, axis, section]);
   const tipAcross = (marker: { x: number; z: number }) =>
     section && section.to > section.from
       ? ((axis === 'x' ? marker.x : marker.z) - section.from) / (section.to - section.from)
       : 0.5;
-  const topView = viewed?.floors[shown]?.top ?? null;
+  const topView = (passages ? passageViews : viewed)?.floors[shown]?.top ?? null;
   const floorsHighestFirst = [...bands].reverse();
   const failedRemake = status?.kind === 'remake' && status.state === 'failed' ? status : null;
 
@@ -373,13 +473,24 @@ export function FloorsPanel(props: Props) {
             Close
           </button>
         </header>
-        <p id="fp-intro" className="muted small">
-          A cut is the height where one floor ends and the next begins. Drag a cut’s line, or type
-          its height; with the keyboard, the arrow keys move a selected cut by 0.1 m and Page Up or
-          Page Down by 1 m. The section, the 3D view and the floor from above follow as you go.
-          Items lie at walking height, so a cut passing through them is likely in the wrong place.
-          Press Make this area again to redraw this area’s map from these floors.
-        </p>
+        {passages ? (
+          <p id="fp-intro" className="muted small">
+            Automatic passages keep the ground whole and split it only where one walkable surface
+            lies over another, such as a bridge over a street: each such overlapping place is listed
+            on the right, where you choose whether the main floor shows its upper storey (the
+            bridge) or its lower one (the passage under it). The other storey goes on a floor of its
+            own. The section, the 3D view and the floor from above follow as you go. Press Make this
+            area again to redraw this area’s map from these floors.
+          </p>
+        ) : (
+          <p id="fp-intro" className="muted small">
+            A cut is the height where one floor ends and the next begins. Drag a cut’s line, or type
+            its height; with the keyboard, the arrow keys move a selected cut by 0.1 m and Page Up
+            or Page Down by 1 m. The section, the 3D view and the floor from above follow as you go.
+            Items lie at walking height, so a cut passing through them is likely in the wrong place.
+            Press Make this area again to redraw this area’s map from these floors.
+          </p>
+        )}
 
         <div className="mm-fp-body">
           <div className="mm-fp-views">
@@ -426,9 +537,9 @@ export function FloorsPanel(props: Props) {
                   {(profile?.areas ?? []).map((value, index) => {
                     if (value <= 0) return null;
                     const barLow = profile!.low + index * profile!.step;
-                    const band = draft.cuts.filter(
-                      (cut) => cut < barLow + profile!.step / 2,
-                    ).length;
+                    const band = passages
+                      ? -1
+                      : draft.cuts.filter((cut) => cut < barLow + profile!.step / 2).length;
                     return (
                       <rect
                         key={index}
@@ -436,19 +547,36 @@ export function FloorsPanel(props: Props) {
                         y={high - barLow - profile!.step}
                         height={profile!.step}
                         width={Math.max(2, Math.sqrt(value / maxBar) * 100)}
-                        fill={floorColour(band)}
+                        fill={band < 0 ? 'var(--mm-fp-bar-plain, #8a909a)' : floorColour(band)}
                       />
                     );
                   })}
                 </svg>
-                <div className="mm-fp-side">
+                <div
+                  className="mm-fp-side"
+                  onClick={(event) => {
+                    // Automatic passages: pressing a walkable surface in the section chooses its floor.
+                    if (!passages || !section || event.target !== event.currentTarget.firstChild)
+                      return;
+                    const box = event.currentTarget.getBoundingClientRect();
+                    const floor = floorAtPixel(
+                      pixelFloors,
+                      section.columns,
+                      section.rows,
+                      (event.clientX - box.left) / box.width,
+                      (event.clientY - box.top) / box.height,
+                    );
+                    if (floor !== null) setSelected(floor);
+                  }}
+                >
                   {section?.pixels ? (
                     <SectionPicture
                       section={section}
                       low={low}
                       high={high}
-                      cuts={draft.cuts}
+                      cuts={passages ? [] : draft.cuts}
                       selected={shown}
+                      pixelFloors={passages ? pixelFloors : null}
                       label={`${area.name} ${AXES.find((a) => a.axis === axis)!.label.toLowerCase()}, walls and all, each floor in its colour`}
                     />
                   ) : (
@@ -508,53 +636,82 @@ export function FloorsPanel(props: Props) {
                       {describe(tip)}
                     </span>
                   )}
+                  {passages &&
+                    section &&
+                    section.to > section.from &&
+                    places.map((p, number) => {
+                      const across = axis === 'x' ? p.x : p.z;
+                      const lowest = Math.min(p.heights[0], p.heights[1]);
+                      const highest = Math.max(p.heights[0], p.heights[1]);
+                      const slot = slots[number] ?? 0;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          className={`mm-fp-place${p.id === place ? ' mm-fp-place-on' : ''}`}
+                          style={{
+                            left: `calc(${((across - section.from) / (section.to - section.from)) * 100}% + ${slot * 18}px)`,
+                            top: top(highest + 0.6),
+                            height: `${((highest - lowest + 1.2) / (high - low)) * 100}%`,
+                          }}
+                          aria-label={`Overlapping place ${number + 1}: the main floor shows its ${p.show === 'lower' ? 'lower' : 'upper'} storey`}
+                          onClick={() => {
+                            setPlace(p.id);
+                          }}
+                        >
+                          <span>{number + 1}</span>
+                        </button>
+                      );
+                    })}
                 </div>
-                {bands.map((band) => (
-                  <div
-                    key={band.index}
-                    className={band.index === shown ? 'mm-fp-band mm-fp-band-on' : 'mm-fp-band'}
-                    style={{
-                      top: top(band.to),
-                      height: `${((band.to - band.from) / (high - low)) * 100}%`,
-                    }}
-                    onClick={() => {
-                      setSelected(band.index);
-                    }}
-                    aria-hidden="true"
-                  />
-                ))}
-                {draft.cuts.map((cut, index) => (
-                  <div
-                    key={index}
-                    className="mm-fp-cut"
-                    style={{ top: top(cut) }}
-                    onPointerDown={(event) => {
-                      startDrag(event, index);
-                    }}
-                    onPointerMove={(event) => {
-                      drag(event, index);
-                    }}
-                    onPointerUp={endDrag}
-                    onPointerCancel={endDrag}
-                  >
-                    <span
-                      className="mm-fp-handle"
-                      role="slider"
-                      tabIndex={0}
-                      aria-label={`Cut ${index + 1}, between ${nameOf(index)} and ${nameOf(index + 1)}`}
-                      aria-valuemin={roundHeight(low)}
-                      aria-valuemax={roundHeight(high)}
-                      aria-valuenow={cut}
-                      aria-valuetext={heightText(cut)}
-                      aria-orientation="vertical"
-                      onKeyDown={(event) => {
-                        cutKeys(event, index);
+                {!passages &&
+                  bands.map((band) => (
+                    <div
+                      key={band.index}
+                      className={band.index === shown ? 'mm-fp-band mm-fp-band-on' : 'mm-fp-band'}
+                      style={{
+                        top: top(band.to),
+                        height: `${((band.to - band.from) / (high - low)) * 100}%`,
                       }}
+                      onClick={() => {
+                        setSelected(band.index);
+                      }}
+                      aria-hidden="true"
+                    />
+                  ))}
+                {!passages &&
+                  draft.cuts.map((cut, index) => (
+                    <div
+                      key={index}
+                      className="mm-fp-cut"
+                      style={{ top: top(cut) }}
+                      onPointerDown={(event) => {
+                        startDrag(event, index);
+                      }}
+                      onPointerMove={(event) => {
+                        drag(event, index);
+                      }}
+                      onPointerUp={endDrag}
+                      onPointerCancel={endDrag}
                     >
-                      {heightText(cut)}
-                    </span>
-                  </div>
-                ))}
+                      <span
+                        className="mm-fp-handle"
+                        role="slider"
+                        tabIndex={0}
+                        aria-label={`Cut ${index + 1}, between ${nameOf(index)} and ${nameOf(index + 1)}`}
+                        aria-valuemin={roundHeight(low)}
+                        aria-valuemax={roundHeight(high)}
+                        aria-valuenow={cut}
+                        aria-valuetext={heightText(cut)}
+                        aria-orientation="vertical"
+                        onKeyDown={(event) => {
+                          cutKeys(event, index);
+                        }}
+                      >
+                        {heightText(cut)}
+                      </span>
+                    </div>
+                  ))}
               </div>
             </div>
             <p className="muted small">
@@ -562,12 +719,18 @@ export function FloorsPanel(props: Props) {
               {AXES.find((a) => a.axis === axis)!.label.toLowerCase()} (
               {AXES.find((a) => a.axis === axis)!.note}, heights stretched to fit): walkable floor
               as bright lines, walls see-through and lighter where more stand one behind another,
-              each in the colour of its floor.
+              {passages
+                ? ' each walkable surface in the colour of its floor, walls grey. Numbered brackets are the overlapping places.'
+                : ' each in the colour of its floor.'}
               {showItems &&
-                ' Dots are items and other locations, in the colour of their type: a yellow ring is within 1 m of a cut, a white ring is on another floor than its height gives or has no floor under it.'}{' '}
-              Press a floor to choose it.
+                (passages
+                  ? ' Dots are items and other locations, in the colour of their type: a white ring has no floor under it.'
+                  : ' Dots are items and other locations, in the colour of their type: a yellow ring is within 1 m of a cut, a white ring is on another floor than its height gives or has no floor under it.')}{' '}
+              {passages
+                ? 'Press a walkable surface to choose its floor.'
+                : 'Press a floor to choose it.'}
             </p>
-            {showItems && nearCount > 0 && (
+            {!passages && showItems && nearCount > 0 && (
               <p className="mm-alert mm-warn small">
                 {plural(nearCount, 'marker')} {nearCount === 1 ? 'lies' : 'lie'} within 1 m of a
                 cut. Things lie at walking height, so the cut may be in the wrong place.
@@ -664,7 +827,12 @@ export function FloorsPanel(props: Props) {
                   <Floors3D
                     model={ready.model}
                     markers={ready.markers}
-                    cuts={draft.cuts}
+                    cuts={passages ? [] : draft.cuts}
+                    triangleFloors={passages ? triangleFloors : null}
+                    clipHeight={
+                      passages ? (passageViews?.floors[shown]?.heights[1] ?? high) + 1.5 : null
+                    }
+                    places={passages ? placeDots : []}
                     selected={shown}
                     hideAbove={hideAbove && shown < floorCount - 1}
                     showMarkers={showItems}
@@ -681,8 +849,11 @@ export function FloorsPanel(props: Props) {
                 <p className="muted small">
                   Drag to turn, scroll or pinch to zoom, right-drag or drag with two fingers to
                   move. With the view selected: the arrow keys turn it, + and − zoom, Home goes back
-                  to the start. Each cut is a see-through level in the colour of the floor above it;
-                  the chosen floor is bright. Outlines draws the edges of the walls and floors.
+                  to the start.{' '}
+                  {passages
+                    ? 'Each walkable surface is in the colour of its floor, walls and slopes grey; the chosen floor is bright. Large white dots are the overlapping places (the chosen one yellow).'
+                    : 'Each cut is a see-through level in the colour of the floor above it; the chosen floor is bright.'}{' '}
+                  Outlines draws the edges of the walls and floors.
                 </p>
               </div>
             )}
@@ -751,10 +922,38 @@ export function FloorsPanel(props: Props) {
           </div>
 
           <div className="mm-fp-side-panel">
+            <div className="mm-fp-method" role="group" aria-labelledby="fp-method-label">
+              <span id="fp-method-label" className="small muted">
+                Floors
+              </span>
+              <div className="mm-row">
+                {FLOOR_METHODS.map((entry) => (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    className="button"
+                    aria-pressed={method === entry.id}
+                    disabled={running}
+                    onClick={() => {
+                      setMethod(entry.id);
+                      setMessage(null);
+                    }}
+                  >
+                    {entry.label}
+                  </button>
+                ))}
+              </div>
+              {area.floorPlan?.method !== method && (
+                <span className="small mm-tone-warn">
+                  The map was made with {floorMethodLabel(area.floorPlan?.method).toLowerCase()}:
+                  press Make this area again to use {floorMethodLabel(method).toLowerCase()}.
+                </span>
+              )}
+            </div>
             <h3>Floors, highest first</h3>
             <ol className="mm-fp-list" reversed>
               {floorsHighestFirst.map((band) => {
-                const floor = viewed?.floors[band.index];
+                const floor = (passages ? passageViews : viewed)?.floors[band.index];
                 const walkable =
                   floor?.areaSquareMetres ??
                   (profile ? walkableBetween(profile, band.from, band.to) : 0);
@@ -785,10 +984,16 @@ export function FloorsPanel(props: Props) {
                           />
                         </label>
                         <div className="small muted">
-                          {band.index === 0 ? 'bottom' : heightText(band.from)} to{' '}
-                          {band.index === floorCount - 1 ? 'top' : heightText(band.to)} ·{' '}
-                          {count(walkable)} m² walkable
+                          {passages
+                            ? `${heightText(band.from).replace(/ m$/, '')} to ${heightText(band.to)}`
+                            : `${band.index === 0 ? 'bottom' : heightText(band.from)} to ${
+                                band.index === floorCount - 1 ? 'top' : heightText(band.to)
+                              }`}{' '}
+                          · {count(walkable)} m² walkable
                           {floor ? ` · ${plural(floor.markers, 'marker')}` : ''}
+                          {passages && band.index === (passageViews?.mainFloor ?? -1)
+                            ? ' · the main floor'
+                            : ''}
                         </div>
                         <div className="mm-row mm-fp-buttons">
                           <button
@@ -813,21 +1018,23 @@ export function FloorsPanel(props: Props) {
                           >
                             Show in 3D
                           </button>
-                          <button
-                            type="button"
-                            className="button"
-                            disabled={floorCount === 1}
-                            onClick={() => {
-                              change(deleteFloor(draft, band.index));
-                              setSelected(Math.max(0, band.index - 1));
-                            }}
-                          >
-                            Delete floor
-                          </button>
+                          {!passages && (
+                            <button
+                              type="button"
+                              className="button"
+                              disabled={floorCount === 1}
+                              onClick={() => {
+                                change(deleteFloor(draft, band.index));
+                                setSelected(Math.max(0, band.index - 1));
+                              }}
+                            >
+                              Delete floor
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
-                    {cutIndex >= 0 && (
+                    {!passages && cutIndex >= 0 && (
                       <CutRow
                         index={cutIndex}
                         cut={draft.cuts[cutIndex]!}
@@ -844,7 +1051,22 @@ export function FloorsPanel(props: Props) {
                 );
               })}
             </ol>
-            {viewed && viewed.dropped.length > 0 && (
+            {passages && (
+              <PlacesList
+                places={places}
+                choices={choices}
+                chosen={place}
+                floorName={nameOf}
+                disabled={running}
+                onChoose={choose}
+                onShow={(target) => {
+                  setPlace(target.id);
+                  const floors = target.floors;
+                  if (floors.length > 0) setSelected(floors[floors.length - 1]!);
+                }}
+              />
+            )}
+            {!passages && viewed && viewed.dropped.length > 0 && (
               <p className="mm-alert mm-warn small">
                 {viewed.dropped.map(heightText).join(', ')}:{' '}
                 {viewed.dropped.length === 1 ? 'this cut leaves' : 'these cuts leave'} a floor with
@@ -853,30 +1075,32 @@ export function FloorsPanel(props: Props) {
               </p>
             )}
 
-            <div className="mm-fp-add">
-              <label>
-                <span className="small muted">Add a floor: cut at</span>
-                <HeightField
-                  label="Height of the new cut, in metres"
-                  value={newCut}
-                  onChange={setNewCut}
-                />
-              </label>
-              <button
-                type="button"
-                className="button"
-                disabled={!addable}
-                onClick={() => {
-                  const next = addCut(draft, newCut);
-                  change(next);
-                  setSelected(next.cuts.indexOf(roundHeight(newCut)) + 1);
-                  if (profile) setNewCut(suggestedCut(profile, next.cuts));
-                }}
-              >
-                Add a floor
-              </button>
-            </div>
-            {!addable && (
+            {!passages && (
+              <div className="mm-fp-add">
+                <label>
+                  <span className="small muted">Add a floor: cut at</span>
+                  <HeightField
+                    label="Height of the new cut, in metres"
+                    value={newCut}
+                    onChange={setNewCut}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={!addable}
+                  onClick={() => {
+                    const next = addCut(draft, newCut);
+                    change(next);
+                    setSelected(next.cuts.indexOf(roundHeight(newCut)) + 1);
+                    if (profile) setNewCut(suggestedCut(profile, next.cuts));
+                  }}
+                >
+                  Add a floor
+                </button>
+              </div>
+            )}
+            {!passages && !addable && (
               <p className="small muted">
                 Choose a height between {heightText(low)} and {heightText(high)}, at least 0.5 m
                 from another cut.
@@ -989,6 +1213,21 @@ export function FloorsPanel(props: Props) {
             the old one. The other maps stay as they are.
           </p>
           <div className="mm-row">
+            <button
+              type="button"
+              className="button"
+              onClick={() => {
+                setComparing(true);
+              }}
+            >
+              Compare with a picture…
+            </button>
+            <span className="small muted">
+              Lay a picture of a map over this area’s map to check it (the picture is only shown,
+              never put in your map pack).
+            </span>
+          </div>
+          <div className="mm-row">
             <button type="button" className="button" onClick={() => void saveFile()}>
               Save my floor cuts to a file…
             </button>
@@ -997,11 +1236,111 @@ export function FloorsPanel(props: Props) {
             </button>
           </div>
           <p className="muted small">
-            The file holds your cuts and floor names of every area of this game, and nothing of the
-            game itself.
+            The file holds your cuts, floor names and passage choices of every area of this game,
+            and nothing of the game itself.
           </p>
         </footer>
       </section>
+      {comparing && (
+        <ComparePanel
+          api={api}
+          game={game}
+          area={area}
+          onClose={() => {
+            setComparing(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Automatic passages: the overlapping places, each with its Upper / Lower choice for the main floor. */
+function PlacesList(props: {
+  places: readonly PassagePlace[];
+  choices: readonly PassageChoice[];
+  chosen: number | null;
+  floorName: (index: number) => string;
+  disabled: boolean;
+  onChoose: (place: PassagePlace, show: 'upper' | 'lower') => void;
+  onShow: (place: PassagePlace) => void;
+}) {
+  const { places, choices } = props;
+  return (
+    <div className="mm-fp-places">
+      <h3>Overlapping places</h3>
+      {places.length === 0 ? (
+        <p className="small muted">
+          Nothing walkable lies over anything else here, so the area is one floor.
+        </p>
+      ) : (
+        <>
+          <p className="small muted">
+            Where one walkable surface lies over another. The main floor shows one storey of each;
+            the other goes on a floor of its own.
+          </p>
+          <ol className="mm-fp-place-list">
+            {places.map((p, number) => {
+              const show = showOf(p, choices);
+              const lowest = Math.min(...p.heights);
+              const highest = Math.max(...p.heights);
+              return (
+                <li
+                  key={p.id}
+                  className={
+                    p.id === props.chosen
+                      ? 'mm-fp-place-item mm-fp-place-item-on'
+                      : 'mm-fp-place-item'
+                  }
+                >
+                  <div className="small">
+                    <strong>Place {number + 1}</strong>{' '}
+                    <span className="muted">
+                      · near x {Math.round(p.x)}, z {Math.round(p.z)} · {plural(p.levels, 'storey')}{' '}
+                      from {heightText(lowest).replace(/ m$/, '')} to {heightText(highest)} ·{' '}
+                      {count(p.area)} m²
+                      {p.floors.length > 0
+                        ? ` · on ${p.floors.map((f) => props.floorName(f)).join(', ')}`
+                        : ''}
+                    </span>
+                  </div>
+                  <div
+                    className="mm-row"
+                    role="group"
+                    aria-label={`Place ${number + 1}: the main floor shows`}
+                  >
+                    <span className="small muted">Main floor shows</span>
+                    {(['upper', 'lower'] as const).map((value) => (
+                      <button
+                        key={value}
+                        type="button"
+                        className="button"
+                        aria-pressed={show === value}
+                        disabled={props.disabled}
+                        onClick={() => {
+                          props.onChoose(p, value);
+                        }}
+                      >
+                        {value === 'upper' ? 'Upper' : 'Lower'}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="button"
+                      aria-pressed={p.id === props.chosen}
+                      onClick={() => {
+                        props.onShow(p);
+                      }}
+                    >
+                      Show
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      )}
     </div>
   );
 }

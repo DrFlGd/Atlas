@@ -439,7 +439,7 @@ describe('a map that is a 3D model', () => {
       checkSceneModelRequest({ ...request, ...change });
     expect(refused({ folder: '../x' })).toBe('The map’s folder is not one this app takes.');
     expect(refused({ url: 'https://maps.example.net/m.glb' })).toBe(
-      'The model must be one file or its pieces.',
+      'The model must be one file, its pieces, or the model itself.',
     );
     expect(refused({ pieces: { urls: ['file:///m.json'], field: 'data' } })).toBe(
       'The model’s pieces are not addresses this app reads.',

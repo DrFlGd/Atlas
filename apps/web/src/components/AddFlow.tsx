@@ -55,6 +55,8 @@ import { saveAddressesAsJob } from '../state/importJobs';
 import { SameTitleOfferCard } from './GameTitles';
 import { UiIcon } from './icons';
 import { MeasureFromPage } from './MeasureFromPage';
+import { GameFilesButton, GameFilesFlow } from './GameFilesFlow';
+import { useGameFiles } from '../state/gameFiles';
 import { SITE_MEMORY } from './removalText';
 import { BrowseKeep, CHOOSE_HOW, ChooseHowOffer, HowStep, LicenceQuestion } from './SiteReading';
 
@@ -153,6 +155,7 @@ export function AddBox() {
       </p>
       {__ATLAS_DOWNLOADS__ ? <MeasureFromPage urls={addresses} /> : null}
       <BrowseGames />
+      {__ATLAS_DOWNLOADS__ ? <GameFilesButton /> : null}
     </form>
   );
 }
@@ -162,6 +165,7 @@ export function AddFlow() {
   const phase = useImport((s) => s.phase);
   const asking = useImport((s) => s.licenceAsk !== null);
   const busy = phase.kind === 'waiting' || phase.kind === 'converting';
+  const gameFiles = useGameFiles((s) => s.step.kind !== 'off');
   const running =
     ((phase.kind === 'run' || phase.kind === 'listing') && phase.run.status === 'running') ||
     (phase.kind === 'games' && phase.step === 'going') ||
@@ -195,7 +199,8 @@ export function AddFlow() {
       </header>
       <div className="library-pane-body touch-scroll" data-scroll-root>
         <LicenceQuestion />
-        {phase.kind === 'idle' ? <AddHelp /> : null}
+        <GameFilesFlow />
+        {phase.kind === 'idle' && !gameFiles ? <AddHelp /> : null}
         {phase.kind === 'how' ? <HowStep phase={phase} /> : null}
         {phase.kind === 'browse' ? <BrowseKeep phase={phase} /> : null}
         {phase.kind === 'failed' ? <Failure message={phase.message} how={phase.how} /> : null}

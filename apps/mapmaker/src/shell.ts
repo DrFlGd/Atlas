@@ -2,7 +2,15 @@
  * The commands of the Map Maker's desktop shell (`src-tauri`). Like the Atlas viewer, the page has no dependency on
  * Tauri: inside the shell, Tauri injects an `invoke` function. In a plain browser `shell` is null.
  */
-import type { AnyReport, HeightProfile, MapStyleId } from './report';
+import type {
+  AnyReport,
+  FloorMethod,
+  HeightProfile,
+  MapStyleId,
+  PassageChoice,
+  PassagePlace,
+  PassagesReport,
+} from './report';
 
 export interface AppInfo {
   version: string;
@@ -13,6 +21,8 @@ export interface AppInfo {
   make3d: boolean;
   /** "Map style", as last chosen. */
   mapStyle: MapStyleId;
+  /** "Floors", as last chosen; null: as suits the game. */
+  floorMethod: FloorMethod | null;
   lastFolder: string | null;
   /** Where Steam usually installs Dark Souls Remastered, when that folder exists on this computer. */
   typicalFolder: string | null;
@@ -60,12 +70,15 @@ export interface SavedReport {
   name: string;
 }
 
-/** One area's floor cuts in the player's file: every cut height (metres) and the floor names, lowest first. */
+/** One area's floor cuts in the player's file: every cut height (metres) and the floor names, lowest first; how its
+ * floors are found, and with automatic passages, the storey shown in each overlapping place the player chose. */
 export interface FloorEntry {
   cuts?: number[];
   names?: string[];
   splitAt?: number[];
   mergeAt?: number[];
+  method?: FloorMethod;
+  passages?: PassageChoice[];
 }
 
 /** The player's floor cuts: per game, per area (mAA_BB). */
@@ -92,6 +105,10 @@ export interface FloorViewsReady {
   /** The area seen from the south (`x`) and from the east (`z`). */
   section: { x: Section; z: Section };
   markers: AreaMarker[];
+  /** How the area was made. */
+  method?: FloorMethod;
+  /** Navmesh triangles kept for automatic passages (0: none). */
+  navmeshTriangles?: number;
 }
 
 /** The area's triangles: each corner's x, height and z as 16-bit steps from `min` to `max`, base64. */
@@ -143,6 +160,35 @@ export interface FloorViews {
   /** Per marker of `FloorViewsReady.markers`: its floor, and the height of the surface under it (null: none). */
   markers: { floor: number; surface: number | null }[];
   seconds: number;
+  method?: FloorMethod;
+  /** Automatic passages: the overlapping places. */
+  places?: PassagePlace[];
+  passages?: Omit<PassagesReport, 'places'>;
+  /** Automatic passages: each triangle's floor (a byte each, 255 for walls and slopes), base64. */
+  triangleFloors?: string;
+  /** Automatic passages: per side view, each pixel's floor (255 for none), base64. */
+  sectionFloors?: { x: string; z: string };
+}
+
+/** How a picture to compare with lies over an area's map: its middle (`x`, `y`, as fractions of the map picture's
+ * width and height), its width as a fraction of the map's (`scale`), its turn in degrees (clockwise), how opaque it
+ * is over the map, and the view (over the map, or side by side). */
+export interface CompareAlignment {
+  picture: string;
+  x: number;
+  y: number;
+  scale: number;
+  turn: number;
+  opacity: number;
+  view: 'overlay' | 'side';
+}
+
+/** A picture chosen to compare with: shown only, never put in a map pack. */
+export interface ComparePicture {
+  name: string;
+  path: string;
+  /** The picture as a `data:` URL. */
+  url: string;
 }
 
 type Invoke = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -153,7 +199,12 @@ export interface Shell {
   checkStart(folder: string): Promise<CheckStatus>;
   checkStatus(): Promise<CheckStatus>;
   checkCancel(): Promise<void>;
-  makeStart(folder: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
+  makeStart(
+    folder: string,
+    make3d: boolean,
+    mapStyle: MapStyleId,
+    floorMethod: FloorMethod | null,
+  ): Promise<CheckStatus>;
   remakeStart(area: string, make3d: boolean, mapStyle: MapStyleId): Promise<CheckStatus>;
   restoreLastMake(): Promise<CheckStatus>;
   floorOverridesRead(): Promise<FloorOverrides>;
@@ -166,8 +217,18 @@ export interface Shell {
     cuts: number[],
     names: string[],
     outlines: boolean,
+    method: FloorMethod,
+    passages: PassageChoice[],
   ): Promise<FloorViews>;
   floorViewsClose(): Promise<void>;
+  /** The pictures to compare with, per `game:mAA_BB`. */
+  compareRead(): Promise<Record<string, CompareAlignment>>;
+  compareSet(
+    key: string,
+    alignment: CompareAlignment | null,
+  ): Promise<Record<string, CompareAlignment>>;
+  comparePickPicture(): Promise<ComparePicture | null>;
+  compareOpenPicture(path: string): Promise<ComparePicture>;
   revealPack(): Promise<void>;
   previewImage(file: string): Promise<string>;
   saveReport(suggestedName: string): Promise<SavedReport | null>;
@@ -183,8 +244,8 @@ export function createShell(invoke: Invoke): Shell {
     checkCancel: async () => {
       await invoke('check_cancel');
     },
-    makeStart: (folder, make3d, mapStyle) =>
-      invoke('make_start', { folder, make3d, mapStyle }) as Promise<CheckStatus>,
+    makeStart: (folder, make3d, mapStyle, floorMethod) =>
+      invoke('make_start', { folder, make3d, mapStyle, floorMethod }) as Promise<CheckStatus>,
     remakeStart: (area, make3d, mapStyle) =>
       invoke('remake_start', { area, make3d, mapStyle }) as Promise<CheckStatus>,
     restoreLastMake: () => invoke('restore_last_make') as Promise<CheckStatus>,
@@ -196,11 +257,24 @@ export function createShell(invoke: Invoke): Shell {
     floorOverridesLoadFile: () =>
       invoke('floor_overrides_load_file') as Promise<FloorCutsFile | null>,
     floorViewsOpen: (area) => invoke('floor_views_open', { area }) as Promise<FloorViewsReady>,
-    floorViewsRequest: (area, cuts, names, outlines) =>
-      invoke('floor_views_request', { area, cuts, names, outlines }) as Promise<FloorViews>,
+    floorViewsRequest: (area, cuts, names, outlines, method, passages) =>
+      invoke('floor_views_request', {
+        area,
+        cuts,
+        names,
+        outlines,
+        method,
+        passages,
+      }) as Promise<FloorViews>,
     floorViewsClose: async () => {
       await invoke('floor_views_close');
     },
+    compareRead: () => invoke('compare_read') as Promise<Record<string, CompareAlignment>>,
+    compareSet: (key, alignment) =>
+      invoke('compare_set', { key, alignment }) as Promise<Record<string, CompareAlignment>>,
+    comparePickPicture: () => invoke('compare_pick_picture') as Promise<ComparePicture | null>,
+    compareOpenPicture: (path) =>
+      invoke('compare_open_picture', { path }) as Promise<ComparePicture>,
     revealPack: async () => {
       await invoke('reveal_pack');
     },
