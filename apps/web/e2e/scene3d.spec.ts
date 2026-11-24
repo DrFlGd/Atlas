@@ -304,6 +304,37 @@ test('the names of the areas float over the view, frame their area when pressed,
   expect(errors).toEqual([]);
 });
 
+test('Floor colours paints each floor of the model in its own colour, and the choice is kept', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await openKeep(page);
+  const status = page.getByTestId('scene-status');
+  const toggle = page.getByTestId('scene-floor-colours-toggle');
+  // Off at first; on, the model is painted by the keep's three floors.
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(toggle).toHaveAttribute('aria-disabled', 'false');
+  await expect(status).toHaveAttribute('data-floor-colours', '0');
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(status).toHaveAttribute('data-floor-colours', '3');
+  await expect.poll(() => storedSetting(page, 'sceneFloorColours')).toBe(true);
+  // One floor shown: still painted, by the same floors.
+  await page.getByTestId('scene-floor').filter({ hasText: 'Upper floor' }).click();
+  await expect(status).toHaveAttribute('data-floor-colours', '3');
+  // Kept on the device.
+  await page.reload();
+  await expect(page.getByTestId('scene-view')).toBeVisible({ timeout: 30_000 });
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  await expect(status).toHaveAttribute('data-floor-colours', '3');
+  // With the keyboard too, as a controller reaches it.
+  await toggle.focus();
+  await page.keyboard.press('Enter');
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  await expect(status).toHaveAttribute('data-floor-colours', '0');
+  expect(errors).toEqual([]);
+});
+
 test('with a controller: the D-pad holds a location, A goes to it, B goes back', async ({
   page,
 }) => {

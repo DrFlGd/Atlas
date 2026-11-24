@@ -2,19 +2,22 @@ import { ChecklistIndex, ProgressCounter, SearchIndex, indexPack } from '@atlas/
 import { makeFixturePack } from '@atlas/schema/testing';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
+  floorColoursReason,
   floorStep,
   floorsOfMap,
   focusLocation,
   leaveFocus,
+  loadSceneSettings,
   pickFloor,
   requestSceneView,
   setCut,
+  setFloorColoursShown,
   sceneOf,
   setViewMode,
   useScene3d,
   webglFailed,
 } from './scene3d';
-import { openProgressStore } from './services';
+import { openProgressStore, progressStore, SETTINGS } from './services';
 import { useAtlas, type LoadedGame } from './store';
 
 /** The fixture's map with a model and three floors (the surface is the ground floor). */
@@ -146,5 +149,25 @@ describe('maps with a model', () => {
     setViewMode('3d');
     expect(useScene3d.getState().mode).toBe('2d');
     expect(useScene3d.getState().webgl).toBe('no');
+  });
+});
+
+describe('Floor colours', () => {
+  it('is off at first, and turned on or off is kept on the device', async () => {
+    expect(useScene3d.getState().floorColours).toBe(false);
+    setFloorColoursShown(true);
+    expect(useScene3d.getState().floorColours).toBe(true);
+    await expect.poll(() => progressStore().getSetting(SETTINGS.sceneFloorColours)).toBe(true);
+    useScene3d.setState({ floorColours: false });
+    await loadSceneSettings();
+    expect(useScene3d.getState().floorColours).toBe(true);
+    setFloorColoursShown(false);
+    await expect.poll(() => progressStore().getSetting(SETTINGS.sceneFloorColours)).toBe(false);
+  });
+
+  it('needs floors, and says so on a map without them', () => {
+    const state = useAtlas.getState();
+    expect(floorColoursReason(floorsOfMap(state, 'demo:map:world'))).toBeNull();
+    expect(floorColoursReason([])).toBe('This map has no floors');
   });
 });

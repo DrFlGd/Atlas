@@ -22,6 +22,7 @@ import {
   MIN_AREA_RADIUS,
   shiftedTarget,
 } from './goTo';
+import { FLOOR_SHADE, MAX_FLOORS, type FloorBand } from './floorColours';
 import { modelLoader, type ModelLoader } from './loader';
 
 /**
@@ -49,6 +50,12 @@ import { modelLoader, type ModelLoader } from './loader';
  * are points it keeps on the model (`setTitles`) and reports where they
  * are in the view after each frame drawn (`titlesOnScreen`), for the page
  * to draw them over it (see `titles.ts`).
+ *
+ * "Floor colours" (`setFloorColours`) paints the map's own model, not its
+ * surroundings, each floor in its own colour by height (see
+ * `floorColours.ts`): a few lines added to its materials' shaders, which
+ * read the floors from uniforms shared by them all, so turning it on or off
+ * or changing the floors needs nothing loaded or built again.
  */
 
 /** A location drawn as a dot. */
@@ -248,6 +255,107 @@ function textureBytesOf(texture: THREE.Texture): number {
 /** How dark the inside of a cut-open model is: the back of a surface, its colour times this. */
 export const INSIDE_SHADE = 0x3a3a3a;
 
+/**
+ * The floors "Floor colours" paints by, shared by every material of the
+ * map's model: `floorCount` 0 is off.
+ */
+export interface FloorUniforms {
+  floorCount: { value: number };
+  floorLows: { value: number[] };
+  floorHighs: { value: number[] };
+  floorColours: { value: THREE.Color[] };
+}
+
+export function floorUniforms(): FloorUniforms {
+  return {
+    floorCount: { value: 0 },
+    floorLows: { value: new Array<number>(MAX_FLOORS).fill(0) },
+    floorHighs: { value: new Array<number>(MAX_FLOORS).fill(0) },
+    floorColours: { value: Array.from({ length: MAX_FLOORS }, () => new THREE.Color()) },
+  };
+}
+
+/** Sets the floors to paint by, lowest first; none turns "Floor colours" off. */
+export function writeFloorUniforms(uniforms: FloorUniforms, bands: readonly FloorBand[]): void {
+  const count = Math.min(bands.length, MAX_FLOORS);
+  uniforms.floorCount.value = count;
+  for (let i = 0; i < count; i++) {
+    const band = bands[i]!;
+    uniforms.floorLows.value[i] = band.low;
+    uniforms.floorHighs.value[i] = band.high;
+    // The colour as the page shows it, in the renderer's working (linear) colours.
+    uniforms.floorColours.value[i]!.set(band.color);
+  }
+}
+
+const FLOOR_VERTEX_HEAD = /* glsl */ `
+varying float vFloorHeight;
+`;
+
+const FLOOR_VERTEX = /* glsl */ `
+#include <project_vertex>
+vFloorHeight = (modelMatrix * vec4(transformed, 1.0)).y;
+`;
+
+const FLOOR_FRAGMENT_HEAD = /* glsl */ `
+#define FLOOR_MAX ${MAX_FLOORS}
+uniform int floorCount;
+uniform float floorLows[FLOOR_MAX];
+uniform float floorHighs[FLOOR_MAX];
+uniform vec3 floorColours[FLOOR_MAX];
+uniform vec3 floorTone;
+varying float vFloorHeight;
+`;
+
+/**
+ * Its floor's colour in place of the surface's own (its texture's cutout
+ * kept), shaded by where the height lies within the floor: the shade is
+ * applied as on the page (sRGB), so it reads as the Map Maker's 2D style.
+ */
+const FLOOR_FRAGMENT = /* glsl */ `
+#include <color_fragment>
+if (floorCount > 0) {
+  int found = 0;
+  for (int i = 0; i < FLOOR_MAX; i++) {
+    if (i >= floorCount) break;
+    if (floorLows[i] <= vFloorHeight) found = i;
+  }
+  float low = floorLows[0];
+  float high = floorHighs[0];
+  vec3 colour = floorColours[0];
+  for (int i = 1; i < FLOOR_MAX; i++) {
+    if (i == found) {
+      low = floorLows[i];
+      high = floorHighs[i];
+      colour = floorColours[i];
+    }
+  }
+  float t = high > low ? clamp((vFloorHeight - low) / (high - low), 0.0, 1.0) : 0.5;
+  float shade = mix(${FLOOR_SHADE[0].toFixed(3)}, ${FLOOR_SHADE[1].toFixed(3)}, t);
+  diffuseColor.rgb = colour * pow(shade, 2.2) * floorTone;
+}
+`;
+
+/**
+ * Lets a material paint by floor when `uniforms` say so; `tone` darkens it
+ * (the inside of a cut-open model).
+ */
+export function paintByFloor(
+  material: THREE.Material,
+  uniforms: FloorUniforms,
+  tone: THREE.Color = new THREE.Color(1, 1, 1),
+): void {
+  material.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, uniforms, { floorTone: { value: tone } });
+    shader.vertexShader =
+      FLOOR_VERTEX_HEAD + shader.vertexShader.replace('#include <project_vertex>', FLOOR_VERTEX);
+    shader.fragmentShader =
+      FLOOR_FRAGMENT_HEAD +
+      shader.fragmentShader.replace('#include <color_fragment>', FLOOR_FRAGMENT);
+  };
+  material.customProgramCacheKey = () => 'atlas-floor-colours';
+}
+
 /** Whether a file was written by the first builder, for a view that drew both sides of everything. */
 export function drawnBothSides(generator: string | undefined): boolean {
   return (generator ?? '').startsWith('Atlas scene builder 0.1.');
@@ -299,7 +407,12 @@ export function lambertOf(material: THREE.Material, bothSides = false): THREE.Me
  * The meshes of a loaded model, merged into one per material (and set of
  * attributes): a cell is drawn in a few calls, whatever its file holds.
  */
-function mergeByMaterial(root: THREE.Object3D, bothSides = false, cut = false): Loaded {
+function mergeByMaterial(
+  root: THREE.Object3D,
+  bothSides = false,
+  cut = false,
+  floors: FloorUniforms | null = null,
+): Loaded {
   root.updateMatrixWorld(true);
   const groups = new Map<string, { material: THREE.Material; parts: THREE.BufferGeometry[] }>();
   const sources = new Set<THREE.BufferGeometry>();
@@ -346,6 +459,7 @@ function mergeByMaterial(root: THREE.Object3D, bothSides = false, cut = false): 
     let lambert = lamberts.get(material);
     if (!lambert) {
       lambert = lambertOf(material, bothSides);
+      if (floors) paintByFloor(lambert, floors);
       lamberts.set(material, lambert);
       if (lambert.map) textures.add(lambert.map);
       if (lambert.emissiveMap) textures.add(lambert.emissiveMap);
@@ -358,7 +472,9 @@ function mergeByMaterial(root: THREE.Object3D, bothSides = false, cut = false): 
       group.add(mesh);
       meshes.push(mesh);
       if (lambert.side === THREE.FrontSide) {
-        const inside = new THREE.Mesh(geometry, insideOf(lambert));
+        const back = insideOf(lambert);
+        if (floors) paintByFloor(back, floors, new THREE.Color(INSIDE_SHADE));
+        const inside = new THREE.Mesh(geometry, back);
         inside.matrixAutoUpdate = false;
         inside.visible = cut;
         group.add(inside);
@@ -413,6 +529,8 @@ export class SceneEngine {
   private dotShown: boolean[] = [];
   private titles: SceneTitleAnchor[] = [];
   private titlePositions: THREE.Vector3[] = [];
+  /** The floors "Floor colours" paints the model by (none: off). */
+  private readonly floorPaint = floorUniforms();
   private readonly dotGeometry = new THREE.BufferGeometry();
   private readonly dotHidden: THREE.ShaderMaterial;
   private readonly dotSeen: THREE.ShaderMaterial;
@@ -619,6 +737,17 @@ export class SceneEngine {
   setTitles(titles: readonly SceneTitleAnchor[]): void {
     this.titles = [...titles];
     this.placeTitles();
+  }
+
+  /** Paints the model by floor (see `floorColours.ts`), or not (null or no floors). */
+  setFloorColours(bands: readonly FloorBand[] | null): void {
+    writeFloorUniforms(this.floorPaint, bands ?? []);
+    this.dirty = true;
+  }
+
+  /** How many floors the model is painted by now: 0 when "Floor colours" is off. */
+  get floorColoursShown(): number {
+    return this.floorPaint.floorCount.value;
   }
 
   setSelected(id: string | null): void {
@@ -1044,6 +1173,7 @@ export class SceneEngine {
         gltf.scene,
         drawnBothSides(gltf.asset.generator),
         this.cutOn(),
+        this.floorPaint,
       );
       loaded.level = level;
       if (this.disposed) {

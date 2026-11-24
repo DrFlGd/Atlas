@@ -47,8 +47,9 @@ export interface MadePack {
 
 export interface CheckStatus {
   state: CheckState;
-  /** A check, a make (Make map), or the making of one area again (Make this area again). */
-  kind: 'check' | 'make' | 'remake';
+  /** A check, a make (Make map), the making of one area again (Make this area again), or the drawing of a pack
+   * again from its 3D models (Draw all areas again). */
+  kind: 'check' | 'make' | 'remake' | 'redraw';
   /** A make (or making again) of a map from a 3D model: `folder` is the model file. */
   fromModel?: boolean;
   runId: number;
@@ -66,6 +67,20 @@ export interface CheckStatus {
   /** The last lines the helper wrote to standard error, for a failed check. */
   helperOutput: string[];
   elapsedSeconds: number;
+  /** While and after drawing a pack again: the report of the make shown before, still the last make. */
+  lastMakeReport?: AnyReport | null;
+}
+
+/** A pack in the Atlas maps folder with 3D maps, which Draw all areas again can draw again. */
+export interface PackWithScenes {
+  /** Its folder's name in the maps folder. */
+  id: string;
+  title: string;
+  /** Maps with a 3D model, and all its maps. */
+  maps3d: number;
+  maps: number;
+  /** Made by the Map Maker: new floor cuts can change its floors. */
+  madeByMapMaker: boolean;
 }
 
 /** A model file chosen with "Make a map from a 3D model…". */
@@ -225,6 +240,10 @@ export interface Shell {
   /** Makes a map pack from the chosen model. */
   modelMakeStart(setup: ModelSetup): Promise<CheckStatus>;
   restoreLastMake(): Promise<CheckStatus>;
+  /** The packs in the Atlas maps folder that have 3D maps. */
+  redrawPacks(): Promise<PackWithScenes[]>;
+  /** Draws every 2D floor of the pack `pack` again from its 3D models, in `mapStyle`. */
+  redrawStart(pack: string, mapStyle: MapStyleId): Promise<CheckStatus>;
   floorOverridesRead(): Promise<FloorOverrides>;
   floorOverridesSet(game: string, area: string, entry: FloorEntry | null): Promise<FloorOverrides>;
   floorOverridesSaveFile(game: string): Promise<FloorCutsFile | null>;
@@ -267,6 +286,9 @@ export function createShell(invoke: Invoke): Shell {
     remakeStart: (area, make3d, mapStyle) =>
       invoke('remake_start', { area, make3d, mapStyle }) as Promise<CheckStatus>,
     restoreLastMake: () => invoke('restore_last_make') as Promise<CheckStatus>,
+    redrawPacks: () => invoke('redraw_packs') as Promise<PackWithScenes[]>,
+    redrawStart: (pack, mapStyle) =>
+      invoke('redraw_start', { pack, mapStyle }) as Promise<CheckStatus>,
     chooseModel: () => invoke('choose_model') as Promise<ModelChoice | null>,
     modelInspect: (allowLarge) => invoke('model_inspect', { allowLarge }) as Promise<Inspected>,
     modelMakeStart: (setup) => invoke('model_make_start', { setup }) as Promise<CheckStatus>,
