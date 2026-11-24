@@ -74,6 +74,8 @@ export interface FlyRequest {
   animate: boolean;
   /** Increments with every request, so the same target can be requested twice. */
   seq: number;
+  /** The region the map goes to, when it goes to one: the 3D view frames it. */
+  region?: string;
 }
 
 export interface Notice {

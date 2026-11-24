@@ -399,7 +399,7 @@ export function goToRegion(regionId: string): void {
   if (layer?.mapId !== region.mapId) return;
   const target = regionTarget(region, layer, viewport);
   if (!target) return;
-  set({ fly: { ...target, animate: !changesMap, seq: ++flySeq } });
+  set({ fly: { ...target, animate: !changesMap, seq: ++flySeq, region: regionId } });
   if (isNarrow()) setPane('filters', false);
 }
 

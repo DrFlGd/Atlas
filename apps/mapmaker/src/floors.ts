@@ -185,6 +185,22 @@ export function bandOf(cuts: readonly number[], height: number): number {
   return cuts.filter((cut) => cut < height).length;
 }
 
+/** How far above an item the 3D view is cut when it goes to it: about head height, in metres. */
+export const HEAD_ROOM = 3;
+
+/**
+ * The height the 3D view is cut at when it goes to an item at `height` on a floor whose top is `top` (null: none):
+ * head room above it, never above the floor's top (just under it, 0.2 m, where the head room would reach past),
+ * and above the item's head all the same when it stands at the top or over it. As the viewer's 3D view does
+ * (apps/web/src/scene/goTo.ts).
+ */
+export function headCut(height: number, top: number | null): number {
+  const head = height + HEAD_ROOM;
+  if (top === null || head <= top) return head;
+  if (height < top - 0.2) return top - 0.2;
+  return height >= top ? head : top;
+}
+
 /** How near a marker may lie to a cut before the panel points it out, in metres: things lie at walking height,
  * so a cut through a cluster of them is likely in the wrong place. */
 export const NEAR_CUT = 1;

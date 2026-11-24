@@ -2,7 +2,9 @@
  * What the Android Back button closes next in the touch layout. Each press
  * closes one thing, the one on top: an open dialog, then a place sheet that
  * was pulled up, then the map chooser, search, the filters or the place
- * sheet, then what is open in the list editor and the editor itself,
+ * sheet, then the floor and cut the 3D view went to a location with
+ * (back to every floor), then what is open in the list editor and the
+ * editor itself,
  * then a checklist or guide page (back to the list of lists), then the
  * page read before in Guides, then a section other than the map (back
  * to the map, or to Guides in a game with no map). Only when nothing is
@@ -25,6 +27,8 @@ export interface BackState {
   filters: boolean;
   /** A place is selected and its sheet or card can be seen. */
   place: boolean;
+  /** The 3D view went to a location (its floor, a cut above it) and can be seen. */
+  sceneFocus?: boolean;
   section: Section;
   /** Lists shows a checklist or a guide rather than the list of them. */
   listsPage: boolean;
@@ -48,6 +52,7 @@ export type BackStep =
   | 'search'
   | 'filters'
   | 'place'
+  | 'scene-focus'
   | 'lists-page'
   | 'guides-back'
   | 'to-map'
@@ -65,6 +70,7 @@ export function backStep(state: BackState): BackStep | null {
   if (state.search) return 'search';
   if (state.filters) return 'filters';
   if (state.place) return 'place';
+  if (state.sceneFocus) return 'scene-focus';
   // In the editor, Back closes one thing of it at a time, then the editor
   // (to the list, as it will be used).
   if (state.editor === 'picking') return 'editor-picking';

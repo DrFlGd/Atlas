@@ -283,6 +283,20 @@ export function floorsOf<T extends FloorLike>(layers: readonly T[], mapId: strin
   return floors.length >= 2 ? floors : [];
 }
 
+/**
+ * The floor a height is on, of floors lowest first (as {@link floorsOf}
+ * gives them): the highest floor that starts at or below it. The lowest
+ * floor takes what is below every floor, and the highest what is above.
+ * Undefined when there are no floors.
+ */
+export function floorAt<T extends FloorLike>(floors: readonly T[], height: number): T | undefined {
+  let found: T | undefined = floors[0];
+  for (const floor of floors) {
+    if (floor.heights && floor.heights[0] <= height) found = floor;
+  }
+  return found;
+}
+
 // ---------------------------------------------------------------------------
 // Where things are
 

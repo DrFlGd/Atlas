@@ -12,6 +12,16 @@ import type { Scene, SceneCell } from '@atlas/schema';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import {
+  FRAME_MS,
+  frameDistance,
+  flightStep,
+  GO_TO_MS,
+  GO_TO_TILT,
+  goToDistance,
+  MIN_AREA_RADIUS,
+  shiftedTarget,
+} from './goTo';
 import { modelLoader, type ModelLoader } from './loader';
 
 /**
@@ -32,6 +42,13 @@ import { modelLoader, type ModelLoader } from './loader';
  * that drew both sides of everything, so they still are.
  *
  * It draws only when something changed: the camera, a cell, the dots.
+ *
+ * It can go to a location (`goTo`: down at it from close by, a little
+ * tilted) and frame an area (`frameArea`), flying there unless the person
+ * asked for reduced motion; any move by hand stops a flight. Area titles
+ * are points it keeps on the model (`setTitles`) and reports where they
+ * are in the view after each frame drawn (`titlesOnScreen`), for the page
+ * to draw them over it (see `titles.ts`).
  */
 
 /** A location drawn as a dot. */
@@ -77,6 +94,35 @@ export interface SceneEvents {
   failed(): void;
   /** The view has come to rest after moving or changing. */
   settled?(): void;
+  /** A frame was drawn: the camera or what is shown may have changed. */
+  frame?(): void;
+}
+
+/** A point of the view for an area's title. */
+export interface SceneTitleAnchor {
+  id: string;
+  /** Map pixel. */
+  px: number;
+  py: number;
+  /** Its height, or null to put it on what lies below `top`. */
+  height: number | null;
+  top: number | null;
+  /** How far its area reaches, in map pixels. */
+  radius: number;
+}
+
+/** A title's point as the view shows it now (see `titlesOnScreen`). */
+export interface SceneTitlePoint {
+  id: string;
+  /** In the view's box, in CSS pixels. */
+  x: number;
+  y: number;
+  /** From the camera, in metres. */
+  distance: number;
+  /** How far its area reaches, in metres. */
+  radius: number;
+  /** In front of the camera and not cut away. */
+  shown: boolean;
 }
 
 export interface SceneEngineOptions {
@@ -342,10 +388,6 @@ function disposeLoaded(loaded: Loaded): void {
   loaded.group.removeFromParent();
 }
 
-function ease(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-}
-
 export class SceneEngine {
   readonly canvas: HTMLCanvasElement;
   private readonly options: SceneEngineOptions;
@@ -369,6 +411,8 @@ export class SceneEngine {
   private dots: SceneDot[] = [];
   private dotPositions: THREE.Vector3[] = [];
   private dotShown: boolean[] = [];
+  private titles: SceneTitleAnchor[] = [];
+  private titlePositions: THREE.Vector3[] = [];
   private readonly dotGeometry = new THREE.BufferGeometry();
   private readonly dotHidden: THREE.ShaderMaterial;
   private readonly dotSeen: THREE.ShaderMaterial;
@@ -540,9 +584,15 @@ export class SceneEngine {
     const onChange = () => {
       this.dirty = true;
     };
+    // Any move by hand (a drag, the wheel, a key) stops a flight.
+    const onStart = () => {
+      this.flight = null;
+    };
     this.controls.addEventListener('change', onChange);
+    this.controls.addEventListener('start', onStart);
     this.cleanups.push(() => {
       this.controls.removeEventListener('change', onChange);
+      this.controls.removeEventListener('start', onStart);
     });
     this.setPose(this.start);
 
@@ -563,6 +613,12 @@ export class SceneEngine {
   setDots(dots: readonly SceneDot[]): void {
     this.dots = [...dots];
     this.placeDots();
+  }
+
+  /** The points of the areas' titles. */
+  setTitles(titles: readonly SceneTitleAnchor[]): void {
+    this.titles = [...titles];
+    this.placeTitles();
   }
 
   setSelected(id: string | null): void {
@@ -658,6 +714,82 @@ export class SceneEngine {
     this.fly(this.start, 800);
   }
 
+  /**
+   * Goes to a location: looks down at it from close by, a little tilted,
+   * facing the way the view faces now (see `goTo.ts`). Its height, or with
+   * none what lies under it below `top`. With `shift`, it shows that many
+   * CSS pixels above the middle of the view (above a card over its foot).
+   */
+  goTo(px: number, py: number, height: number | null, top: number | null, shift = 0): void {
+    const [x, , z] = this.options.frame.fromPixel(px, py, 0);
+    const y = height ?? this.groundAt(x, z, top);
+    const distance = goToDistance(this.extent.size, this.controls.minDistance);
+    const azimuth = this.controls.getAzimuthalAngle();
+    const target = shiftedTarget([x, y + DOT_LIFT, z], shift, {
+      distance,
+      azimuth,
+      fovDegrees: this.camera.fov,
+      height: this.height,
+    });
+    this.fly(
+      { target: new THREE.Vector3(...target), distance, azimuth, polar: GO_TO_TILT },
+      GO_TO_MS,
+    );
+  }
+
+  /** The height a location stands at: its own, or what lies under it below `top`. */
+  heightAt(px: number, py: number, top: number | null): number {
+    const [x, , z] = this.options.frame.fromPixel(px, py, 0);
+    return this.groundAt(x, z, top);
+  }
+
+  /**
+   * Shows the whole of an area: from above, a little tilted, facing the
+   * way the view faces now, far enough to see `radius` map pixels round
+   * its point.
+   */
+  frameArea(px: number, py: number, height: number | null, radius: number): void {
+    const [x, , z] = this.options.frame.fromPixel(px, py, 0);
+    const y = height ?? this.groundAt(x, z, null);
+    const reach = Math.max(radius * this.options.frame.unit, MIN_AREA_RADIUS);
+    const distance = Math.min(
+      Math.max(
+        frameDistance(reach, this.camera.fov, this.camera.aspect),
+        this.controls.minDistance,
+      ),
+      this.controls.maxDistance,
+    );
+    this.fly(
+      {
+        target: new THREE.Vector3(x, y, z),
+        distance,
+        azimuth: this.controls.getAzimuthalAngle(),
+        polar: GO_TO_TILT,
+      },
+      FRAME_MS,
+    );
+  }
+
+  /** Where the areas' titles are in the view now, in the order given. */
+  titlesOnScreen(): SceneTitlePoint[] {
+    const v = new THREE.Vector3();
+    const top = this.topCut;
+    const unit = this.options.frame.unit;
+    return this.titles.map((title, i) => {
+      const position = this.titlePositions[i]!;
+      v.copy(position).project(this.camera);
+      const front = v.z >= -1 && v.z <= 1;
+      return {
+        id: title.id,
+        x: ((v.x + 1) / 2) * this.width,
+        y: ((1 - v.y) / 2) * this.height,
+        distance: position.distanceTo(this.camera.position),
+        radius: title.radius * unit,
+        shown: front && (top === null || position.y - DOT_LIFT <= top + 0.5),
+      };
+    });
+  }
+
   /** Moves the point looked at to a dot, keeping the angle; near enough to see it. */
   lookAt(id: string, closer = false): boolean {
     const index = this.dots.findIndex((dot) => dot.id === id);
@@ -675,6 +807,21 @@ export class SceneEngine {
     const [x, , z] = this.options.frame.fromPixel(px, py, 0);
     const pose = this.pose();
     this.fly({ ...pose, target: new THREE.Vector3(x, this.groundAt(x, z, null), z) }, 700);
+  }
+
+  /** The model's widest extent, in metres. */
+  get size(): number {
+    return this.extent.size;
+  }
+
+  /** The view's box, in CSS pixels. */
+  viewSize(): { width: number; height: number } {
+    return { width: this.width, height: this.height };
+  }
+
+  /** Whether the view was let go of (`dispose`). */
+  get gone(): boolean {
+    return this.disposed;
   }
 
   /** The dots drawn and in front of the camera, with where each is in the view's box. */
@@ -758,15 +905,8 @@ export class SceneEngine {
     if (this.flight) {
       const t = Math.min(1, (now - this.flight.start) / this.flight.ms);
       const { from, to } = this.flight;
-      const k = ease(t);
-      let turn = to.azimuth - from.azimuth;
-      turn = ((((turn + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
-      this.setPose({
-        target: from.target.clone().lerp(to.target, k),
-        distance: from.distance * (to.distance / from.distance) ** k,
-        azimuth: from.azimuth + turn * k,
-        polar: from.polar + (to.polar - from.polar) * k,
-      });
+      const step = flightStep(from, to, t);
+      this.setPose({ ...step, target: from.target.clone().lerp(to.target, step.k) });
       if (t >= 1) this.flight = null;
     }
     if (this.controls.update()) this.dirty = true;
@@ -812,6 +952,7 @@ export class SceneEngine {
     this.camera.updateProjectionMatrix();
     if (this.towardCamera) this.updatePlanes();
     this.renderer.render(this.world, this.camera);
+    this.options.events.frame?.();
   }
 
   private fit(): void {
@@ -919,6 +1060,7 @@ export class SceneEngine {
         this.options.budget,
       );
       this.placeDots(state);
+      this.placeTitles();
       this.drawRoute();
     } catch {
       state.failed.add(level);
@@ -1000,6 +1142,18 @@ export class SceneEngine {
     this.dotGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
     this.dotGeometry.setAttribute('dotColor', new THREE.BufferAttribute(colors, 3));
     this.writeDotStates();
+  }
+
+  /** Puts the titles' points where they belong: at their height, or on what lies below. */
+  private placeTitles(): void {
+    const frame = this.options.frame;
+    const meshes = this.meshes();
+    this.titlePositions = this.titles.map((title) => {
+      const [x, , z] = frame.fromPixel(title.px, title.py, 0);
+      const y = title.height ?? this.groundAt(x, z, title.top, meshes);
+      return new THREE.Vector3(x, y + DOT_LIFT, z);
+    });
+    this.dirty = true;
   }
 
   /** Each dot's state (found, selected) and whether it is shown under the cuts. */

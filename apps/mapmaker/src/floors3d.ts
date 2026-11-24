@@ -7,6 +7,10 @@
  * slopes grey, there are no cut planes, and "Hide what is above this floor" leaves out the floors above it and
  * what stands higher than its top; the overlapping places are shown as large white-ringed dots.
  *
+ * Pressing an item's dot goes to it (`goTo`): the panel shows its floor and cuts the view at head height above it
+ * (`cutAt`), and the view flies down to look at it from close by, a little tilted, facing the way it faced (it jumps
+ * where the person asked for less motion; any move by hand stops it).
+ *
  * It is loaded only when the panel shows it (three.js is large). Mouse, touch and keyboard turn and zoom it; it
  * draws only when something changed. Coordinates: three.js x is the game's x (east), y its height, z minus its z
  * (so that north is away from a viewer in the south and east is on the right, as on the map).
@@ -35,6 +39,8 @@ export interface FloorsSceneState {
   clipHeight?: number | null;
   /** Automatic passages: the overlapping places (x east, y height, z north), the chosen one first in look. */
   places?: readonly { x: number; y: number; z: number; chosen: boolean }[];
+  /** After going to an item: the height everything above is left out, in place of the floor's. */
+  cutAt?: number | null;
 }
 
 export interface FloorsSceneHover {
@@ -53,6 +59,8 @@ export interface FloorsScene {
   turn(around: number, up: number): void;
   /** Moves nearer (factor below 1) or further. */
   zoom(factor: number): void;
+  /** Flies down to look at a marker from close by. */
+  goTo(index: number): void;
   dispose(): void;
 }
 
@@ -163,6 +171,8 @@ export function createFloorsScene(options: {
   model: AreaModel;
   markers: readonly AreaMarker[];
   onHover: (hover: FloorsSceneHover | null) => void;
+  /** A press on the view: the marker pressed, or null for none. */
+  onPick?: (index: number | null) => void;
 }): FloorsScene {
   const { container, model, markers } = options;
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -377,6 +387,16 @@ export function createFloorsScene(options: {
     if (frame === 0 && !disposed) frame = requestAnimationFrame(draw);
   };
   controls.addEventListener('change', render);
+  // A flight, stopped by any move by hand.
+  let flight: {
+    from: { target: THREE.Vector3; offset: THREE.Spherical };
+    to: { target: THREE.Vector3; offset: THREE.Spherical };
+    start: number;
+  } | null = null;
+  let flightFrame = 0;
+  controls.addEventListener('start', () => {
+    flight = null;
+  });
 
   const resetView = () => {
     controls.target.copy(centre);
@@ -438,8 +458,36 @@ export function createFloorsScene(options: {
   const onLeave = () => {
     options.onHover(null);
   };
+  // A press (not a drag): the nearest marker shown within reach.
+  let down: { x: number; y: number; id: number } | null = null;
+  const onDown = (event: PointerEvent) => {
+    down = event.button === 0 ? { x: event.clientX, y: event.clientY, id: event.pointerId } : null;
+  };
+  const onUp = (event: PointerEvent) => {
+    const press = down;
+    down = null;
+    if (press?.id !== event.pointerId || !options.onPick) return;
+    if (Math.hypot(event.clientX - press.x, event.clientY - press.y) > 6) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const reach = event.pointerType === 'mouse' ? HOVER_REACH : HOVER_REACH * 2;
+    let best: number | null = null;
+    let bestDistance = reach;
+    screen.forEach((p, i) => {
+      if (!visible[i]) return;
+      const distance = Math.hypot(p.x - x, p.y - y);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = i;
+      }
+    });
+    options.onPick(best);
+  };
   canvas.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerleave', onLeave);
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointerup', onUp);
 
   const turn = (around: number, up: number) => {
     if (disposed) return;
@@ -466,7 +514,60 @@ export function createFloorsScene(options: {
     render();
   };
 
+  const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+  const FLY_MS = 700;
+  const fly = (now: number) => {
+    flightFrame = 0;
+    if (!flight || disposed) return;
+    const t = Math.min(1, (now - flight.start) / FLY_MS);
+    const k = ease(t);
+    const { from, to } = flight;
+    let turn = to.offset.theta - from.offset.theta;
+    turn = ((((turn + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) - Math.PI;
+    const offset = new THREE.Spherical(
+      from.offset.radius * (to.offset.radius / from.offset.radius) ** k,
+      from.offset.phi + (to.offset.phi - from.offset.phi) * k,
+      from.offset.theta + turn * k,
+    );
+    controls.target.copy(from.target).lerp(to.target, k);
+    camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(offset));
+    camera.lookAt(controls.target);
+    controls.update();
+    render();
+    if (t >= 1) flight = null;
+    else flightFrame = requestAnimationFrame(fly);
+  };
+  const goTo = (index: number) => {
+    const marker = markers[index];
+    if (!marker || disposed) return;
+    const from = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
+    // About 26 m above it (less in a small area), tilted by 10°, facing the way the view faces.
+    const distance = THREE.MathUtils.clamp(
+      26 / Math.cos(THREE.MathUtils.degToRad(10)),
+      controls.minDistance,
+      Math.max(controls.minDistance, reach * 0.6),
+    );
+    const to = new THREE.Spherical(distance, THREE.MathUtils.degToRad(10), from.theta);
+    const target = new THREE.Vector3(marker.x, marker.y + 0.4, -marker.z);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      flight = null;
+      controls.target.copy(target);
+      camera.position.copy(target).add(new THREE.Vector3().setFromSpherical(to));
+      camera.lookAt(target);
+      controls.update();
+      render();
+      return;
+    }
+    flight = {
+      from: { target: controls.target.clone(), offset: from },
+      to: { target, offset: to },
+      start: performance.now(),
+    };
+    if (flightFrame === 0) flightFrame = requestAnimationFrame(fly);
+  };
+
   return {
+    goTo,
     update(state) {
       if (disposed) return;
       const cuts = state.cuts.slice(0, MAX_CUTS);
@@ -490,13 +591,15 @@ export function createFloorsScene(options: {
       }
       uniforms.byTriangle!.value = byTriangle ? 1 : 0;
       uniforms.hideFloorsAbove!.value = byTriangle && state.hideAbove ? 1 : 0;
-      const clipTop = byTriangle
+      const floorTop = byTriangle
         ? state.hideAbove && state.clipHeight !== null && state.clipHeight !== undefined
           ? state.clipHeight
           : 1e9
         : state.hideAbove && state.selected < cuts.length
           ? cuts[state.selected]!
           : 1e9;
+      const cutAt = state.cutAt ?? null;
+      const clipTop = cutAt ?? floorTop;
       uniforms.clipTop!.value = clipTop;
       edgeMaterial.uniforms.clipTop!.value = clipTop;
       showEdges(state.outlines);
@@ -518,10 +621,13 @@ export function createFloorsScene(options: {
     dispose() {
       disposed = true;
       if (frame) cancelAnimationFrame(frame);
+      if (flightFrame) cancelAnimationFrame(flightFrame);
       observer.disconnect();
       controls.dispose();
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerleave', onLeave);
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointerup', onUp);
       for (const child of planes.children)
         ((child as THREE.Mesh).material as THREE.Material).dispose();
       planeGeometry.dispose();

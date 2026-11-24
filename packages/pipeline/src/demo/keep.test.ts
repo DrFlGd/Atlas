@@ -108,6 +108,15 @@ describe('the demo 3D map', () => {
     expect(spots.length).toBeGreaterThanOrEqual(30);
     expect(spots.some((l) => l.height === undefined)).toBe(true);
     expect(spots.some((l) => l.guideId !== null)).toBe(true);
+    // Its areas: the valley and the places in it, each location in one of them.
+    const regions = pack.regions.filter((r) => r.mapId === KEEP_MAP_ID);
+    expect(regions.filter((r) => r.parentId === null).map((r) => r.name)).toEqual([
+      'Mossgate Vale',
+    ]);
+    expect(regions.length).toBeGreaterThan(4);
+    expect(regions.every((r) => r.polygon !== undefined)).toBe(true);
+    const ids = new Set(regions.map((r) => r.id));
+    expect(spots.every((l) => l.regionId !== null && ids.has(l.regionId))).toBe(true);
     // Every file the scene names is written, finer levels larger, all of it small.
     for (const cell of map.scene!.cells) {
       for (const lod of cell.lods) expect(files.has(lod.file)).toBe(true);

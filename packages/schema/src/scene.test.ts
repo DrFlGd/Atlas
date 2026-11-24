@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   checkPackIntegrity,
+  floorAt,
   floorsOf,
   layerSchema,
   locationSchema,
@@ -168,6 +169,22 @@ describe('3D maps in the schema', () => {
     ];
     expect(floorsOf(layers, 'm').map((layer) => layer.id)).toEqual(['a', 'b']);
     expect(floorsOf(layers, 'n')).toEqual([]);
+  });
+
+  it('finds the floor a height is on: the lowest takes what is below, the highest what is above', () => {
+    const floors = [
+      { id: 'caves', mapId: 'm', heights: [-12, -4] as [number, number] },
+      { id: 'ground', mapId: 'm', heights: [-4, 6.75] as [number, number] },
+      { id: 'upper', mapId: 'm', heights: [6.75, 10.75] as [number, number] },
+    ];
+    expect(floorAt(floors, -10)?.id).toBe('caves');
+    expect(floorAt(floors, -40)?.id).toBe('caves');
+    expect(floorAt(floors, 3.2)?.id).toBe('ground');
+    // On the line between two floors: the one above, which starts there.
+    expect(floorAt(floors, 6.75)?.id).toBe('upper');
+    expect(floorAt(floors, 7.3)?.id).toBe('upper');
+    expect(floorAt(floors, 80)?.id).toBe('upper');
+    expect(floorAt(floors.slice(0, 0), 3)).toBeUndefined();
   });
 
   it('turns model points into world points', () => {

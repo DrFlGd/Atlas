@@ -85,6 +85,7 @@ describe('Back', () => {
           search: { search: false },
           filters: { filters: false },
           place: { place: false },
+          'scene-focus': { sceneFocus: false },
           'lists-page': { listsPage: false },
           'guides-back': { guidesBack: false },
           'to-map': { section: 'map' as const },
@@ -97,6 +98,13 @@ describe('Back', () => {
       };
     }
     expect(steps).toEqual(['dialog', 'collapse-place', 'filters', 'place', 'lists-page', 'to-map']);
+  });
+
+  it('closes the place card, then goes back from the floor the 3D view went to', () => {
+    const state: BackState = { ...nothing, place: true, sceneFocus: true };
+    expect(backStep(state)).toBe('place');
+    expect(backStep({ ...state, place: false })).toBe('scene-focus');
+    expect(backStep({ ...state, place: false, sceneFocus: false })).toBeNull();
   });
 
   it('closes the page editor before going back in Guides', () => {

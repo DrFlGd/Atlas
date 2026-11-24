@@ -9,6 +9,7 @@ import {
   entryOf,
   floorBands,
   floorColour,
+  headCut,
   fromBase64,
   heightTicks,
   lookOf,
@@ -268,5 +269,16 @@ describe('the markers and the section', () => {
     ]);
     expect(mapStyleLabel('outlines')).toBe('Height shaded with outlines');
     expect(mapStyleLabel(undefined)).toBe('Height shaded');
+  });
+});
+
+describe('going to an item in the 3D view', () => {
+  it('cuts at head height above it, never above its floor’s top', () => {
+    expect(bandOf([4, 9], 5.5)).toBe(1);
+    expect(headCut(5.5, 9)).toBeCloseTo(8.5);
+    expect(headCut(7, 9)).toBeCloseTo(8.8);
+    expect(headCut(8.9, 9)).toBe(9);
+    expect(headCut(12, 9)).toBe(15);
+    expect(headCut(12, null)).toBe(15);
   });
 });

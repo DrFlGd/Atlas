@@ -22,12 +22,20 @@ export function Floors3D(props: {
   triangleFloors?: Uint8Array | null;
   clipHeight?: number | null;
   places?: readonly { x: number; y: number; z: number; chosen: boolean }[];
+  /** A press on the view: the marker pressed, or null for none. */
+  onPick?: (index: number | null) => void;
+  /** The item the view went to (`seq` tells a press again from the last), and the height it is cut at. */
+  focus?: { index: number; cut: number; seq: number } | null;
 }) {
   const { model, markers } = props;
   const box = useRef<HTMLDivElement>(null);
   const [scene, setScene] = useState<FloorsScene | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [hover, setHover] = useState<FloorsSceneHover | null>(null);
+  const pickRef = useRef(props.onPick);
+  useEffect(() => {
+    pickRef.current = props.onPick;
+  });
 
   useEffect(() => {
     let live = true;
@@ -36,7 +44,13 @@ export function Floors3D(props: {
       ({ createFloorsScene }) => {
         if (!live || !box.current) return;
         try {
-          made = createFloorsScene({ container: box.current, model, markers, onHover: setHover });
+          made = createFloorsScene({
+            container: box.current,
+            model,
+            markers,
+            onHover: setHover,
+            onPick: (index) => pickRef.current?.(index),
+          });
           setScene(made);
         } catch {
           setProblem('The 3D view could not start: this computer’s graphics do not offer WebGL.');
@@ -53,7 +67,15 @@ export function Floors3D(props: {
   }, [model, markers]);
 
   const { cuts, selected, hideAbove, showMarkers, outlines, looks } = props;
-  const { triangleFloors, clipHeight, places } = props;
+  const { triangleFloors, clipHeight, places, focus } = props;
+  const cutAt = focus?.cut ?? null;
+  // Going to an item: the view flies down to it, once for each press.
+  const flownTo = useRef(0);
+  useEffect(() => {
+    if (!scene || !focus || focus.seq === flownTo.current) return;
+    flownTo.current = focus.seq;
+    scene.goTo(focus.index);
+  }, [scene, focus]);
   useEffect(() => {
     scene?.update({
       cuts,
@@ -65,8 +87,10 @@ export function Floors3D(props: {
       triangleFloors: triangleFloors ?? null,
       clipHeight: clipHeight ?? null,
       places: places ?? [],
+      cutAt,
     });
   }, [
+    cutAt,
     scene,
     cuts,
     selected,

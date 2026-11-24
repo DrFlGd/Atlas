@@ -1,4 +1,5 @@
 import { moveMap, select } from '../state/actions';
+import { leaveFocus, useScene3d } from '../state/scene3d';
 import { checklistBack } from '../state/checklists';
 import { useAtlas } from '../state/store';
 import { backStep } from './backStack';
@@ -33,6 +34,8 @@ export function handleBack(): boolean {
     place:
       atlas.selectedId !== null &&
       (wide || (touch.section === 'map' && !touch.search && !touch.filters)),
+    sceneFocus:
+      useScene3d.getState().focus !== null && (wide || (touch.section === 'map' && !touch.search)),
     section: touch.section,
     listsPage: page !== undefined && page.kind !== 'index',
     guidesBack: canGoBack(useReader.getState()),
@@ -71,6 +74,9 @@ export function handleBack(): boolean {
       return true;
     case 'place':
       select(null);
+      return true;
+    case 'scene-focus':
+      leaveFocus();
       return true;
     case 'lists-page':
       checklistBack();
@@ -140,7 +146,8 @@ export function revealSelection() {
     requestAnimationFrame(() => {
       const { game, selectedId, view } = useAtlas.getState();
       const location = selectedId ? game?.pack.locations.get(selectedId) : undefined;
-      const pane = document.querySelector('.touch-map .map-pane');
+      // The 3D view goes to the location itself (scene/SceneView.tsx).
+      const pane = document.querySelector('.touch-map .map-pane:not(.scene-view)');
       if (!location || !view || !pane) return;
       const map = pane.getBoundingClientRect();
       const scale = (view.bounds.maxX - view.bounds.minX) / Math.max(1, map.width);
