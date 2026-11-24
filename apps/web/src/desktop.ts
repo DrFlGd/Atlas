@@ -1500,6 +1500,11 @@ export interface ShellGameFolder {
   token: string;
   /** The folder's own name, to show. */
   name: string;
+  /**
+   * The app's own folder for a kind of game's downloaded files (see
+   * {@link DesktopBridge.tiles.openGameFiles}): it can also download into it.
+   */
+  downloads?: boolean;
 }
 
 /** One entry of a picked game folder. */
@@ -1685,6 +1690,19 @@ export interface DesktopBridge {
     readGameFile(token: string, path: string, start: number, length: number): Promise<Uint8Array>;
     /** Forgets a picked game folder. */
     closeGameFolder(token: string): Promise<void>;
+    /**
+     * Opens the app's own folder for the files `importer` downloads for its
+     * kind of game `kind` (asked only once the person has confirmed they
+     * own the game); read as a picked folder is.
+     */
+    openGameFiles(importer: string, kind: string): Promise<ShellGameFolder>;
+    /**
+     * Downloads the file at `url` (one request as the app, one at a time)
+     * into the folder {@link openGameFiles} opened, keeps it at `path`
+     * there, and resolves to its bytes; rejects with a plain sentence for
+     * any answer but the file.
+     */
+    downloadGameFile(token: string, url: string, path: string): Promise<Uint8Array>;
     /** "Download location photos": the pictures a pack lists to be fetched later. */
     photosPlan(packId: string): Promise<PhotoPlan>;
     photosStart(packId: string): Promise<DownloadSnapshot>;
@@ -2202,6 +2220,8 @@ function noDownloads(): DesktopBridge['tiles'] {
     listGameFolder: missing,
     readGameFile: missing,
     closeGameFolder: missing,
+    openGameFiles: missing,
+    downloadGameFile: missing,
     photosPlan: missing,
     photosStart: missing,
     photosStartAgain: missing,
@@ -2288,6 +2308,13 @@ export function createBridge(invoke: Invoke, listen: Listen = noEvents): Desktop
           readGameFile: (token, path, start, length) =>
             call<unknown>('import_folder_read', { token, path, start, length }).then(bytesOf),
           closeGameFolder: (token) => call('import_folder_close', { token }),
+          openGameFiles: (importer, kind) =>
+            call<ShellGameFolder>('import_files_open', { importer, kind }).then((folder) => ({
+              ...folder,
+              downloads: true,
+            })),
+          downloadGameFile: (token, url, path) =>
+            call<unknown>('import_files_download', { token, url, path }).then(bytesOf),
           photosPlan: (packId) => call('photos_plan', { packId }),
           photosStart: (packId) => call('photos_start', { packId }),
           photosStartAgain: (packId) => call('photos_start_again', { packId }),

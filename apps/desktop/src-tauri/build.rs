@@ -164,6 +164,8 @@ const DOWNLOAD_COMMANDS: &[&str] = &[
     "import_folder_list",
     "import_folder_read",
     "import_folder_close",
+    "import_files_open",
+    "import_files_download",
     "import_keep_model",
     "library_style_texts",
     "download_settings_get",
