@@ -9,6 +9,7 @@ import {
   addOwnLocation,
   addOwnLocationPhoto,
   changeOwnLocation,
+  locationOfOwn,
   mergeOwnFiles,
   mergeOwnLocations,
   namedMapsAndLevels,
@@ -206,6 +207,25 @@ describe('changing own locations, types and areas', () => {
     expect(noNote.locations[0]).not.toHaveProperty('note');
     const added = addOwnLocation(noNote, { ...noNote.locations[0]!, id: 'demo:loc:own.l9' });
     expect(removeOwnLocation(added, 'demo:loc:own.l9').locations).toHaveLength(1);
+  });
+
+  it('gives a location a height and a level, and takes the height off again', () => {
+    const mine = own();
+    const raised = changeOwnLocation(
+      mine,
+      'demo:loc:own.l1',
+      { x: 12, y: 22, height: 7.25, layerId: 'demo:layer:caves' },
+      NOW,
+    );
+    expect(raised.locations[0]).toMatchObject({ height: 7.25, layerId: 'demo:layer:caves' });
+    expect(locationOfOwn(raised.locations[0]!).height).toBe(7.25);
+    expect(changeOwnLocation(raised, 'demo:loc:own.l1', { height: 7.25 }, NOW)).toBe(raised);
+    // Moved on the 2D map: no height, so it sits on the surface below it.
+    const flat = changeOwnLocation(raised, 'demo:loc:own.l1', { x: 1, height: undefined }, NOW);
+    expect(flat.locations[0]).not.toHaveProperty('height');
+    expect(locationOfOwn(flat.locations[0]!)).not.toHaveProperty('height');
+    // Without one to take off, nothing changes.
+    expect(changeOwnLocation(flat, 'demo:loc:own.l1', { height: undefined }, NOW)).toBe(flat);
   });
 
   it('removes a type only when no location uses it, and its group when empty', () => {

@@ -52,6 +52,7 @@ export function locationOfOwn(own: OwnLocation): Location {
     guideId: note === undefined ? null : ownNoteId(own.id),
     since: '0.0.0',
     ...(own.photos && own.photos.length > 0 ? { photos: own.photos } : {}),
+    ...(own.height !== undefined ? { height: own.height } : {}),
   };
 }
 
@@ -248,10 +249,17 @@ export function addOwnLocation(own: OwnLocations, location: OwnLocation): OwnLoc
   return { ...own, locations: [...own.locations, location] };
 }
 
-/** What can change of an own location. */
+/**
+ * What may be changed of an own location. A `height` of undefined, given,
+ * takes the height off (the location then sits on the surface below it);
+ * `layerId` moves it to another level of its map.
+ */
 export type OwnLocationChanges = Partial<
-  Pick<OwnLocation, 'name' | 'categoryId' | 'regionId' | 'note' | 'x' | 'y'>
+  Pick<OwnLocation, 'name' | 'categoryId' | 'regionId' | 'note' | 'x' | 'y' | 'height' | 'layerId'>
 >;
+
+/** The changes whose undefined value takes the field off rather than leaving it. */
+const REMOVABLE = new Set<keyof OwnLocationChanges>(['note', 'height']);
 
 /** Changes an own location; the same data when nothing changes. */
 export function changeOwnLocation(
@@ -266,10 +274,11 @@ export function changeOwnLocation(
   const next: OwnLocation = { ...location };
   let touched = false;
   for (const [key, value] of Object.entries(changes) as [keyof OwnLocationChanges, unknown][]) {
-    if (value === undefined && key !== 'note') continue;
+    if (value === undefined && !REMOVABLE.has(key)) continue;
     if (next[key] === value) continue;
     touched = true;
     if (key === 'note' && (value === undefined || value === '')) delete next.note;
+    else if (key === 'height' && value === undefined) delete next.height;
     else (next as Record<string, unknown>)[key] = value;
   }
   if (!touched) return own;
