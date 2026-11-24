@@ -193,11 +193,11 @@ def test_bad_files_and_packs_made_from_game_files_are_refused(builder: Path, tmp
     model = model_fixtures.write_stl(tmp_path / "house.stl")
     with pytest.raises(MakeError, match="Allow very large models"):
         make(builder, model, tmp_path / "out", tmp_path / "Maps", max_triangles=10)
-    game = tmp_path / "Maps" / "bloodborne"
+    game = tmp_path / "Maps" / "made-up-game"
     game.mkdir(parents=True)
     (game / "manifest.json").write_text(
         json.dumps({"writtenBy": {"name": WRITER}, "attribution": [{"name": GAME_FILES_ATTRIBUTION}]}), encoding="utf-8"
     )
     with pytest.raises(MakeError, match="made from game files"):
-        make(builder, model, tmp_path / "out", tmp_path / "Maps", name="Bloodborne", up="+z", scale=0.001)
+        make(builder, model, tmp_path / "out", tmp_path / "Maps", name="Made-up Game", up="+z", scale=0.001)
     assert (game / "manifest.json").is_file()
