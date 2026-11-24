@@ -11,6 +11,10 @@
 //! shown all along, and stays when the run fails or is cancelled (the helper leaves the pack and the report as
 //! they were then). The last make's folders are kept in the settings, and its report is shown again when the app
 //! opens (`restore`).
+//!
+//! Draw all areas again (`redraw <pack folder>`) needs no game folder: it draws a pack's 2D floors again from the
+//! pack's own 3D models, writing its report into a folder of its own. The make shown before it stays the last
+//! make (`last_make`, and `Status::last_make_report`), so its areas can still be adjusted and made again.
 
 use std::{
     collections::VecDeque,
@@ -80,6 +84,13 @@ pub enum Job {
         floor_method: Option<String>,
         area: String,
     },
+    /// Draw every 2D floor of the pack in the folder given to `start` again, from its own 3D models.
+    Redraw {
+        scene_builder: Option<PathBuf>,
+        floor_overrides: Option<PathBuf>,
+        map_style: String,
+        floor_method: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -88,6 +99,7 @@ pub enum Kind {
     Check,
     Make,
     Remake,
+    Redraw,
 }
 
 impl Job {
@@ -96,6 +108,7 @@ impl Job {
             Job::Check => Kind::Check,
             Job::Make { .. } => Kind::Make,
             Job::Remake { .. } => Kind::Remake,
+            Job::Redraw { .. } => Kind::Redraw,
         }
     }
 
@@ -103,7 +116,7 @@ impl Job {
     pub fn zip_file(&self) -> &'static str {
         match self {
             Job::Check => ZIP_FILE,
-            Job::Make { .. } | Job::Remake { .. } => MAKE_ZIP_FILE,
+            Job::Make { .. } | Job::Remake { .. } | Job::Redraw { .. } => MAKE_ZIP_FILE,
         }
     }
 }
@@ -134,6 +147,8 @@ pub struct Status {
     pub error_code: Option<String>,
     pub helper_output: Vec<String>,
     pub elapsed_seconds: f64,
+    /// While and after drawing a pack again: the report of the make shown before, which stays the last make.
+    pub last_make_report: Option<Value>,
 }
 
 impl Status {
@@ -152,6 +167,7 @@ impl Status {
             error_code: None,
             helper_output: Vec::new(),
             elapsed_seconds: 0.0,
+            last_make_report: None,
         }
     }
 }
@@ -311,6 +327,32 @@ impl Progress {
                 self.push_line("pack", line);
                 self.pack = Some(event);
             }
+            "maps" => {
+                let count = event.get("count").and_then(Value::as_u64).unwrap_or(0);
+                self.push_line(
+                    "info",
+                    format!("{count} map{} with a 3D model to draw again", plural(count)),
+                );
+            }
+            "map" => {
+                // Drawing a pack again: what became of each map.
+                let name = text(&event, "name");
+                let line = if event.get("redrawn").and_then(Value::as_bool) == Some(true) {
+                    let floors = event.get("floors").and_then(Value::as_u64).unwrap_or(0);
+                    let from = match event.get("floorsFrom").and_then(Value::as_str) {
+                        Some("yours") => ", with your floor cuts",
+                        Some("passages") => ", with automatic passages",
+                        _ => "",
+                    };
+                    format!(
+                        "{name}: drawn again, {floors} floor{}{from}",
+                        plural(floors)
+                    )
+                } else {
+                    format!("{name}: left as it was ({})", text(&event, "reason"))
+                };
+                self.push_line("area", line);
+            }
             "warning" => self.push_line("warning", text(&event, "message")),
             "error" => {
                 self.error = Some(text(&event, "message"));
@@ -371,6 +413,8 @@ struct Run {
     report: Option<Value>,
     /// None for a make restored from an earlier session (`restore`).
     child: Option<Arc<Mutex<Child>>>,
+    /// Drawing a pack again: the make shown before (its game folder, output folder and report), still the last make.
+    previous_make: Option<(PathBuf, PathBuf, Value)>,
     stdin: Option<ChildStdin>,
 }
 
@@ -576,7 +620,30 @@ impl Checks {
                 }
                 command.arg("make");
             }
+            Job::Redraw { .. } => {
+                command.arg("redraw");
+            }
         }
+        // Drawing a pack again keeps the make shown before as the last make, and its pack.
+        let previous_make = match &job {
+            Job::Redraw { .. } => inner.run.as_ref().and_then(|run| match run.job.kind() {
+                Kind::Make | Kind::Remake => run
+                    .report
+                    .clone()
+                    .map(|report| (run.folder.clone(), run.out_dir.clone(), report)),
+                Kind::Redraw => run.previous_make.clone(),
+                Kind::Check => None,
+            }),
+            _ => None,
+        };
+        let previous_pack = match &job {
+            Job::Redraw { .. } => inner
+                .run
+                .as_ref()
+                .filter(|_| previous_make.is_some())
+                .and_then(|run| run.progress.pack.clone()),
+            _ => None,
+        };
         // Making an area again shows the report of the make it changes until it is done, and keeps it when it
         // fails or is cancelled.
         let mut previous: Option<(Value, Option<Value>)> = None;
@@ -632,6 +699,24 @@ impl Checks {
         if let Job::Remake { area, .. } = &job {
             command.arg("--remake").arg(area);
         }
+        if let Job::Redraw {
+            scene_builder,
+            floor_overrides,
+            map_style,
+            floor_method,
+        } = &job
+        {
+            if let Some(builder) = scene_builder {
+                command.arg("--scene-builder").arg(builder);
+            }
+            if let Some(file) = floor_overrides {
+                command.arg("--floor-overrides").arg(file);
+            }
+            command.arg("--map-style").arg(map_style);
+            if let Some(method) = floor_method {
+                command.arg("--floor-method").arg(method);
+            }
+        }
         command
             .arg("--stdin-cancel")
             .current_dir(out_dir)
@@ -660,12 +745,13 @@ impl Checks {
             started: Instant::now(),
             finished: None,
             progress: Progress {
-                pack: pack.flatten(),
+                pack: pack.flatten().or(previous_pack),
                 ..Progress::default()
             },
             report,
             child: Some(Arc::clone(&child)),
             stdin,
+            previous_make,
         });
         drop(inner);
 
@@ -762,6 +848,10 @@ impl Checks {
                 .unwrap_or_else(Instant::now)
                 .duration_since(run.started)
                 .as_secs_f64(),
+            last_make_report: run
+                .previous_make
+                .as_ref()
+                .map(|(_, _, report)| report.clone()),
         }
     }
 
@@ -822,11 +912,14 @@ impl Checks {
             return Err(format!("{name} is not a file of the report."));
         }
         let inner = lock(&self.inner);
-        let run = inner
-            .run
-            .as_ref()
-            .filter(|run| run.report.is_some())
-            .ok_or("Nothing finished yet.")?;
+        let run = inner.run.as_ref().ok_or("Nothing finished yet.")?;
+        // While a pack is drawn again, the make shown before is still shown, with its pictures.
+        if let (Kind::Redraw, Some((_, out_dir, _))) = (run.job.kind(), &run.previous_make) {
+            return Ok(out_dir.join(name));
+        }
+        if run.report.is_none() {
+            return Err("Nothing finished yet.".to_owned());
+        }
         Ok(run.out_dir.join(name))
     }
 
@@ -834,8 +927,10 @@ impl Checks {
     pub fn last_make(&self) -> Option<(PathBuf, PathBuf, Value)> {
         let inner = lock(&self.inner);
         let run = inner.run.as_ref()?;
-        if run.job.kind() == Kind::Check {
-            return None;
+        match run.job.kind() {
+            Kind::Check => return None,
+            Kind::Redraw => return run.previous_make.clone(),
+            Kind::Make | Kind::Remake => {}
         }
         let report = run.report.clone()?;
         Some((run.folder.clone(), run.out_dir.clone(), report))
@@ -881,6 +976,7 @@ impl Checks {
             report: Some(report),
             child: None,
             stdin: None,
+            previous_make: None,
         });
         true
     }
@@ -904,7 +1000,7 @@ impl Checks {
         inner
             .run
             .as_ref()
-            .filter(|run| run.report.is_some())
+            .filter(|run| run.report.is_some() || run.previous_make.is_some())
             .and_then(|run| run.progress.pack.as_ref())
             .and_then(|pack| pack.get("folder"))
             .and_then(Value::as_str)

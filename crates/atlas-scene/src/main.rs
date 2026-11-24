@@ -5,6 +5,8 @@
 //! ```text
 //! atlas-scene build <job.json>     build a model into a pack folder
 //! atlas-scene check <pack folder>  check the 3D side of a pack folder
+//! atlas-scene unpack <pack folder> <map id> <out.glb>
+//!                                  read a map's model back out as a raw model
 //! atlas-scene --version
 //! ```
 //!
@@ -14,8 +16,10 @@
 //! "message":…}` lines, then `{"event":"done","scene":…,"report":…}` (and
 //! `"rendered"` when it drew the map), or `{"event":"error","message":…}`
 //! and exits with 1. `check` writes `{"event":"checked",…}` with the
-//! problems it found and exits with 1 when there are any. A bad command
-//! line exits with 2.
+//! problems it found and exits with 1 when there are any. `unpack` writes
+//! the map's finest model as one raw `.glb` (see `atlas_scene::unpack`) and
+//! `{"event":"done","report":…}`, or an `error` line and exits with 1. A bad
+//! command line exits with 2.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -96,9 +100,21 @@ fn main() -> ExitCode {
                 ExitCode::SUCCESS
             }
         }
+        ["unpack", folder, map, output] => {
+            match atlas_scene::unpack::unpack_to_file(Path::new(folder), map, Path::new(output)) {
+                Ok(report) => {
+                    say(&json!({ "event": "done", "report": report }));
+                    ExitCode::SUCCESS
+                }
+                Err(message) => {
+                    say(&json!({ "event": "error", "message": message }));
+                    ExitCode::from(1)
+                }
+            }
+        }
         _ => {
             eprintln!(
-                "atlas-scene {}\n\nUsage:\n  atlas-scene build <job.json>\n  atlas-scene check <pack folder>\n  atlas-scene --version",
+                "atlas-scene {}\n\nUsage:\n  atlas-scene build <job.json>\n  atlas-scene check <pack folder>\n  atlas-scene unpack <pack folder> <map id> <out.glb>\n  atlas-scene --version",
                 env!("CARGO_PKG_VERSION")
             );
             ExitCode::from(2)

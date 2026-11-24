@@ -7,6 +7,8 @@
                     [--config <file>] [--floor-overrides <file>] [--remake <area>] [--map-style <style>]
                     [--no-3d] [--scene-builder <atlas-scene program>]
     atlas-gamefiles floor-views <output folder of a make> --area <mAA_BB>
+    atlas-gamefiles redraw <pack folder> --out <output folder> [--map-style <style>] [--floor-overrides <file>]
+                    [--floor-method passages|cuts] [--scene-builder <atlas-scene program>] [--stdin-cancel]
     atlas-gamefiles --version
 
 The sample sizes and time limits have defaults for Phase 0; the options are there for testing (the app does not
@@ -16,7 +18,9 @@ Standard output carries JSON lines only (see events.py): `start`, `game`, `areas
 then `done` (exit code 0), `cancelled` (exit code 3) or `error` (exit code 1). Standard error carries anything else.
 `make --remake` makes one area again in place of its map in the pack made before into the same output folder; an
 `error` it cannot start with has a `code` (see make.MakeError). `floor-views` answers the Adjust floors panel's
-requests, one JSON line each way (see floorviews.py).
+requests, one JSON line each way (see floorviews.py). `redraw` draws every 2D floor of a map pack again from the
+pack's own 3D models, with no game files (see redraw.py): `start`, `maps`, `progress`, a `map` line per map (drawn
+again, or why not), `warning`, then `done`, `cancelled` or `error`.
 """
 
 from __future__ import annotations
@@ -122,8 +126,9 @@ def parser() -> argparse.ArgumentParser:
         "--map-style",
         default=None,
         metavar="STYLE",
-        help="how the floors are drawn: shaded (by height, the default) or outlines (by height, with the walls and "
-        "the edges of the walkable floor as clear lines); textured and textured-outlines are not available yet",
+        help="how the floors are drawn: shaded (by height, the default), outlines (by height, with the walls and "
+        "the edges of the walkable floor as clear lines) or floors (each floor in its own colour, shaded by height "
+        "within it); textured and textured-outlines are not available yet",
     )
     make.add_argument(
         "--floor-method",
@@ -146,6 +151,16 @@ def parser() -> argparse.ArgumentParser:
         default=None,
         help="seconds after which an area's geometry still being read is stopped (default 300)",
     )
+    again = commands.add_parser(
+        "redraw", help="draw every 2D floor of a map pack again from its own 3D models (no game files needed)"
+    )
+    again.add_argument("pack", type=Path, help="the map pack's folder (in the Atlas maps folder)")
+    again.add_argument("--out", type=Path, required=True, help="where to write report.json")
+    again.add_argument("--map-style", default=None, metavar="STYLE", help="how the floors are drawn, as for make")
+    again.add_argument("--floor-overrides", type=Path, default=None, help="the player's own floor cuts, as for make")
+    again.add_argument("--floor-method", default=None, choices=("passages", "cuts"), help="as for make")
+    again.add_argument("--scene-builder", type=Path, default=None, help="the 3D builder program, as for make")
+    again.add_argument("--stdin-cancel", action="store_true", help="as for check")
     views = commands.add_parser("floor-views", help="redraw an area's floors from given cuts (for the Map Maker)")
     views.add_argument("out", type=Path, help="the output folder of a make (it holds floor-data/)")
     views.add_argument("--area", required=True, help="the area, mAA_BB")
@@ -197,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
             traceback.print_exc()
             events.emit("error", message=f"{type(error).__name__}: {error}")
             return EXIT_ERROR
+    if args.command == "redraw":
+        return run_redraw(args, events, token)
     if args.command == "make":
         if args.remake and not re.fullmatch(r"m\d\d_\d\d(_\d\d_\d\d)?", args.remake.lower()):
             events.emit("error", message=f"{args.remake} is not an area (mAA_BB).")
@@ -257,6 +274,33 @@ def run_make(args: argparse.Namespace, events: tp.Any, token: CancelToken, areas
         events.emit("error", message=str(error), **({"code": error.code} if error.code else {}))
         return EXIT_USAGE
     except UnsafeOutputError as error:
+        events.emit("error", message=str(error))
+        return EXIT_USAGE
+    except Exception as error:
+        traceback.print_exc()
+        events.emit("error", message=f"{type(error).__name__}: {error}")
+        return EXIT_ERROR
+    return EXIT_OK
+
+
+def run_redraw(args: argparse.Namespace, events: tp.Any, token: CancelToken) -> int:
+    from .redraw import RedrawError, Redrawer
+
+    try:
+        Redrawer(
+            args.pack,
+            args.out,
+            events,
+            token=token,
+            style=args.map_style,
+            floor_overrides_file=args.floor_overrides,
+            floor_method=args.floor_method,
+            scene_builder=args.scene_builder,
+        ).run()
+    except Cancelled:
+        events.emit("cancelled", message="Stopped before the end; the map pack was left as it was.")
+        return EXIT_CANCELLED
+    except RedrawError as error:
         events.emit("error", message=str(error))
         return EXIT_USAGE
     except Exception as error:

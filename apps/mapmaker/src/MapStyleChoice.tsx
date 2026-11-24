@@ -28,7 +28,8 @@ export function MapStyleChoice(props: {
       </select>
       <span id={`${props.id}-note`} className="small muted">
         Height shaded with outlines draws the walls and the edges of the walkable floor as clear
-        lines. Textured styles: {TEXTURES_NOTE.toLowerCase()}.
+        lines. Colour by floor gives each floor its own colour, darker low and lighter high within
+        it. Textured styles: {TEXTURES_NOTE.toLowerCase()}.
       </span>
     </div>
   );

@@ -31,6 +31,8 @@ pub fn run() {
             commands::make_start,
             commands::remake_start,
             commands::restore_last_make,
+            commands::redraw_packs,
+            commands::redraw_start,
             commands::floor_overrides_read,
             commands::floor_overrides_set,
             commands::floor_overrides_save_file,

@@ -8,6 +8,8 @@ const COMMANDS: &[&str] = &[
     "make_start",
     "remake_start",
     "restore_last_make",
+    "redraw_packs",
+    "redraw_start",
     "floor_overrides_read",
     "floor_overrides_set",
     "floor_overrides_save_file",

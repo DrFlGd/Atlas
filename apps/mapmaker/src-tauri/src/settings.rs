@@ -157,7 +157,7 @@ pub fn clean_alignment(value: &Value) -> Option<Value> {
 }
 
 /// The map styles the helper can draw now (the textured ones need the game's textures, not read yet).
-pub const MAP_STYLES: [&str; 2] = ["shaded", "outlines"];
+pub const MAP_STYLES: [&str; 3] = ["shaded", "outlines", "floors"];
 pub const DEFAULT_MAP_STYLE: &str = "shaded";
 
 pub fn is_map_style(style: &str) -> bool {

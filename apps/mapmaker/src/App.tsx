@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ComparePanel } from './Compare';
 import { FloorsPanel } from './FloorsPanel';
 import { MapStyleChoice } from './MapStyleChoice';
+import { RedrawCard } from './RedrawCard';
 import {
   CATEGORY_LABELS,
   SOURCE_LABELS,
@@ -185,14 +186,31 @@ function MapMaker() {
     [api, make3d],
   );
 
-  // A make's report stays shown while one of its areas is made again, and when that fails.
-  const report = status?.report ?? null;
+  const redraw = useCallback(
+    async (pack: string) => {
+      setProblem(null);
+      setSaved(null);
+      try {
+        setStatus(await api.redrawStart(pack, mapStyle));
+      } catch (error) {
+        setProblem(errorText(error));
+      }
+    },
+    [api, mapStyle],
+  );
+
+  // A make's report stays shown while one of its areas is made again, and when that fails; and while and after
+  // its pack (or another) is drawn again.
+  const report =
+    status?.kind === 'redraw' ? (status.lastMakeReport ?? null) : (status?.report ?? null);
   const what =
     status?.kind === 'make'
       ? 'making of the map'
       : status?.kind === 'remake'
         ? 'making of the area again'
-        : 'check';
+        : status?.kind === 'redraw'
+          ? 'drawing of the maps again'
+          : 'check';
   const adjusted = isMakeReport(report)
     ? report.areas.find((area) => area.key === adjusting)
     : null;
@@ -266,7 +284,7 @@ function MapMaker() {
           >
             Check game files
           </button>
-          {running && (
+          {running && status.kind !== 'redraw' && (
             <button
               id="check-cancel"
               type="button"
@@ -336,7 +354,9 @@ function MapMaker() {
             be flat. Please reinstall the app.
           </p>
         )}
-        {status && status.state !== 'idle' && <Progress status={status} />}
+        {status && status.state !== 'idle' && status.kind !== 'redraw' && (
+          <Progress status={status} />
+        )}
       </section>
 
       {problem && (
@@ -356,7 +376,7 @@ function MapMaker() {
       {status?.state === 'cancelled' && (
         <p className="mm-alert">
           The {what} was stopped. Nothing was changed in the maps folder.{' '}
-          {status.kind === 'remake'
+          {status.kind === 'remake' || status.kind === 'redraw'
             ? 'Your map pack is as it was.'
             : 'Press a button above to start again.'}
         </p>
@@ -387,6 +407,21 @@ function MapMaker() {
             It is made from your game files, so keep it to yourself: do not share or upload it.
           </p>
         </section>
+      )}
+
+      {info && (
+        <RedrawCard
+          api={api}
+          status={status}
+          madePack={status?.pack?.id ?? null}
+          mapStyle={mapStyle}
+          running={running}
+          helperFound={info.helperFound}
+          onMapStyle={setMapStyle}
+          onStart={(pack) => void redraw(pack)}
+          onCancel={() => void cancel()}
+          progress={status && status.state !== 'idle' ? <Progress status={status} /> : null}
+        />
       )}
 
       {report && (
@@ -516,12 +551,16 @@ function Failure({
       ? 'Making the map'
       : status.kind === 'remake'
         ? 'Making the area again'
-        : 'The check';
+        : status.kind === 'redraw'
+          ? 'Drawing the maps again'
+          : 'The check';
   return (
     <section className="mm-card mm-bad-card" role="alert">
       <h2>{title} stopped with an error</h2>
       <p>{status.error ?? 'The file reader stopped unexpectedly.'}</p>
-      {status.kind === 'remake' && <p>Your map pack was left as it was.</p>}
+      {(status.kind === 'remake' || status.kind === 'redraw') && (
+        <p>Your map pack was left as it was.</p>
+      )}
       {onMakeAll && (
         <div className="mm-row">
           <button type="button" className="button button-primary" onClick={onMakeAll}>

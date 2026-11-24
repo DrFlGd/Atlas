@@ -12,8 +12,11 @@ with nothing stacked over it, stays on it: see floors.py), over the floors below
 above this floor.
 
 The map style (`MAP_STYLES`) chooses how: "Height shaded" as above; "Height shaded with outlines" draws the
-collision boundaries (the walls and the edges of the walkable floor) as clear light lines. The textured styles
-need the game's textures, which are not read yet: they are listed, and refused, so that the windows can show them.
+collision boundaries (the walls and the edges of the walkable floor) as clear light lines; "Colour by floor" gives
+each floor its own colour (`FLOOR_PALETTE`, the colours the 3D view's "Floor colours" uses), darker low and lighter
+high within that floor. The textured styles need the game's textures, which are not read yet: they are listed, and
+refused, so that the windows can show them. `draw_floor` is the one place a style becomes a floor's picture: Make
+map and "Draw all areas again" (redraw.py) both draw through it.
 
 Seen from above: right is +x and up is +z, so a world point (x, z) is at pixel ((x - xMin) * s, (zMax - z) * s)
 for `s` pixels per metre, and the map's `worldTransform` is the inverse (pixel to world x, z).
@@ -40,6 +43,19 @@ RAMP = (
 )
 LIGHT = np.array([-0.45, 0.8, 0.4])  # from the north-west (-x, +z) and above
 OUTLINE = (246, 236, 200)  # the outlines of "Height shaded with outlines": light, over a dark edge
+# "Colour by floor": one colour per floor, lowest first, again from the eighth (the Okabe-Ito colours, which
+# readers with any common colour blindness tell apart; neighbouring floors differ in lightness too). The 3D view's
+# "Floor colours" (apps/web/src/scene/floorColours.ts) uses the same ones.
+FLOOR_PALETTE = (
+    (0, 114, 178),  # blue
+    (230, 159, 0),  # orange
+    (0, 158, 115),  # bluish green
+    (204, 121, 167),  # reddish purple
+    (86, 180, 233),  # sky blue
+    (213, 94, 0),  # vermillion
+    (240, 228, 66),  # yellow
+)
+FLOOR_SHADE = (0.55, 1.0)  # a floor's colour times this at its lowest and at its highest
 TEXTURES_NOTE = "Needs the game's textures, which Map Maker does not read yet"
 
 
@@ -51,6 +67,7 @@ class MapStyle:
     textured: bool
     available: bool
     note: str | None = None
+    by_floor: bool = False  # each floor in its own colour (FLOOR_PALETTE) rather than on the height ramp
 
 
 MAP_STYLES = {
@@ -58,6 +75,7 @@ MAP_STYLES = {
     for style in (
         MapStyle("shaded", "Height shaded", outlines=False, textured=False, available=True),
         MapStyle("outlines", "Height shaded with outlines", outlines=True, textured=False, available=True),
+        MapStyle("floors", "Colour by floor", outlines=False, textured=False, available=True, by_floor=True),
         MapStyle("textured", "Textured", outlines=False, textured=True, available=False, note=TEXTURES_NOTE),
         MapStyle("textured-outlines", "Textured with outlines", outlines=True, textured=True, available=False, note=TEXTURES_NOTE),
     )
@@ -73,6 +91,8 @@ def map_style(name: str | None) -> MapStyle:
     if not style.available:
         raise ValueError(f"the map style {style.label!r} is not available: {style.note}")
     return style
+
+
 MARKER_COLOURS = {
     "bonfire": (255, 154, 60),
     "boss": (255, 123, 114),
@@ -164,6 +184,79 @@ def triangle_colours(triangles: np.ndarray, low: float, high: float, flipped: bo
     heights = triangles[:, :, 1].mean(axis=1)
     t = (heights - low) / (high - low) if high > low else np.full(len(heights), 0.5)
     return np.clip(ramp_colours(t) * shade[:, None], 0, 255).astype(np.uint8)
+
+
+def floor_colour(index: int) -> tuple[int, int, int]:
+    """The colour of floor `index` (0 the lowest) in "Colour by floor"."""
+    return FLOOR_PALETTE[index % len(FLOOR_PALETTE)]
+
+
+def floor_triangle_colours(triangles: np.ndarray, index: int, low: float, high: float, flipped: bool) -> np.ndarray:
+    """"Colour by floor": the floor's own colour, darker where its triangles are low within the floor (`low` to
+    `high`, its heights) and lighter where high, with the same light from the north-west as the height ramp."""
+    a, b, c = (triangles[:, i].astype(np.float64) for i in range(3))
+    normal = np.cross(b - a, c - a)
+    length = np.linalg.norm(normal, axis=1, keepdims=True)
+    normal = np.divide(normal, length, out=np.zeros_like(normal), where=length > 1e-12)
+    if flipped:
+        normal = -normal
+    light = LIGHT / np.linalg.norm(LIGHT)
+    shade = 0.78 + 0.32 * np.clip(normal @ light, 0.0, 1.0)
+    heights = triangles[:, :, 1].mean(axis=1) if len(triangles) else np.zeros(0)
+    t = np.clip((heights - low) / (high - low), 0.0, 1.0) if high > low else np.full(len(heights), 0.5)
+    bottom, top = FLOOR_SHADE
+    colour = np.array(floor_colour(index), dtype=np.float64)
+    rgb = colour[None, :] * (bottom + (top - bottom) * t)[:, None] * shade[:, None]
+    return np.clip(rgb, 0, 255).astype(np.uint8).reshape(-1, 3)
+
+
+@dataclass(frozen=True)
+class SurfaceTextures:
+    """What a model says of the look of its triangles, for the textured styles: per triangle its corners' texture
+    coordinates (`uvs`, (n, 3, 2)), its material (`material`, (n,), an index into `materials`) and its corners'
+    vertex colours (`colours`, (n, 3, 4) linear RGBA, or None); per material its colour (`colour`, linear RGBA),
+    its picture (`image`, an index into `images`, or None), the picture's wrap (`wrap`, glTF's) and alpha mode
+    (`alpha`: "OPAQUE", "MASK" or "BLEND", with `alphaCutoff`); `images` holds each picture's PNG or JPEG bytes."""
+
+    uvs: np.ndarray
+    material: np.ndarray
+    colours: np.ndarray | None
+    materials: tuple[dict[str, tp.Any], ...]
+    images: tuple[bytes, ...]
+
+    def subset(self, chosen: np.ndarray) -> SurfaceTextures:
+        """The same for the triangles `chosen` (indices) only."""
+        return SurfaceTextures(
+            self.uvs[chosen],
+            self.material[chosen],
+            None if self.colours is None else self.colours[chosen],
+            self.materials,
+            self.images,
+        )
+
+
+def draw_floor(
+    frame: Frame,
+    style: MapStyle,
+    triangles: np.ndarray,
+    walls: np.ndarray,
+    *,
+    index: int,
+    floor_range: tuple[float, float],
+    area_range: tuple[float, float],
+    flipped: bool,
+    surface: SurfaceTextures | None = None,
+) -> tp.Any:
+    """One floor's layer in the map style: its walkable `triangles` coloured as the style says (on the area's height
+    ramp over `area_range`, or in the floor's own colour over `floor_range`), then drawn with its walls
+    (`draw_layer`). `frame` is any frame with `to_pixels`, `scale`, `width` and `height`. `surface` is the look of
+    the triangles when the model has one (a pack's own model with textures, see redraw.py), for the textured
+    styles; the styles drawn by height or by floor do not need it."""
+    if style.by_floor:
+        colours = floor_triangle_colours(triangles, index, float(floor_range[0]), float(floor_range[1]), flipped)
+    else:
+        colours = triangle_colours(triangles, float(area_range[0]), float(area_range[1]), flipped)
+    return draw_layer(frame, triangles, colours, walls, style)
 
 
 def draw_layer(
