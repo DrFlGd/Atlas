@@ -25,6 +25,7 @@ import {
   waitingCuts,
   plural,
   previewFile,
+  removedLine,
   sourceDetails,
   sourceText,
   sourceTone,
@@ -1033,6 +1034,9 @@ function MadeAreaRow({
             {cuts}
             {adjusting.ownFor.includes(area.key) ? ' · your floor cuts' : ''}
           </div>
+        )}
+        {removedLine(area.removedPieces) && (
+          <div className="small muted">{removedLine(area.removedPieces)}</div>
         )}
         {waitingCuts(area, adjusting.saved[area.key], adjusting.ownFor.includes(area.key)) && (
           <div className="small mm-tone-warn">

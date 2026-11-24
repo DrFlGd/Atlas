@@ -16,18 +16,25 @@ with what does not change with the cuts:
 - `markers`: each marker's position and type, with its colour on the map;
 - `heights`: the heights the panel shows (the walkable floor's, and a little of the walls above and below);
 - `profile`: the walkable area at each height, as the report has it, and the cuts without the player's own;
-- `method`: the floor method the area was made with (`cuts` or `passages`).
+- `method`: the floor method the area was made with (`cuts` or `passages`);
+- `pieces` (not for a map made from a 3D model): the area's connected pieces of surface for "Remove pieces" (see
+  pieces.py): `triangle`, each triangle's piece (32-bit, base64); per piece its `part` (an index in `parts`, 32-bit),
+  `box` (six 32-bit floats: the lowest x, height and z, then the highest), `triangles` (32-bit) and `area` (32-bit
+  float, square metres), each base64 and little-endian; and `parts`, the parts' names.
 
 Then it answers one request per line on standard input (`{"id": 1, "cuts": [4.5, 12], "names": ["", "Roof"]}`,
-with `"outlines": true` for the pictures from above with outlines, and `"method": "passages"` with
-`"passages": [{"x": 31, "z": 28, "show": "lower"}]` for automatic passages) with one `views` line on standard
-output, until standard input ends:
+with `"outlines": true` for the pictures from above with outlines, `"method": "passages"` with
+`"passages": [{"x": 31, "z": 28, "show": "lower"}]` for automatic passages, and `"removed": [...]` for the pieces
+removed, as the floor cuts file writes them) with one `views` line on standard output, until standard input ends:
 
 - `floors`: each floor between the cuts, lowest first: its name, the heights of its walkable surface, its walkable
   area, its markers, and a small picture of it from above (north up, the floors below faded, as the map draws it);
 - `markers`: the floor each marker is put on, and the height of the walkable surface under it (none: no surface
   under it, so it goes by its height);
-- `cuts`: the cuts used (a cut that leaves a floor with nothing on it is dropped, as Make map drops it).
+- `cuts`: the cuts used (a cut that leaves a floor with nothing on it is dropped, as Make map drops it);
+- `removed`: per removed piece, how many triangles of it were found (0: not found in this area);
+- with removed pieces, the `section` and `heights` without them (as `ready` gives them), and `profile` is
+  without them too. The 3D view's `model` always has every triangle: the panel shows the removed ones apart.
 
 With automatic passages, also:
 
@@ -58,12 +65,15 @@ from .config import area_key, clean_floor_entry
 from .events import Events, claim_stdin, stdin_lines
 from .floors import FloorPlan, Prepared, apply_overrides, height_profile, locate, plan_floors, prepare, sample
 from .pack import floor_names
+from .pieces import clean_pieces, find_removed, piece_table
 from .passages import PassagePrep, plan_passages, prepare_passages
 from .render import BACKGROUND, ITEM_COLOUR, MARKER_COLOURS, OUTLINE, WALL, ramp_colours
 
 FLOOR_DATA = "floor-data"
-DATA_VERSION = 2  # 2 adds the navmesh (`nav`) and `method`; version 1 data still loads (no navmesh, cuts)
-READABLE_VERSIONS = (1, 2)
+# 2 adds the navmesh (`nav`) and `method`; 3 each triangle's part (`owners`, an index in `ownerNames` of the meta).
+# Version 1 data still loads (no navmesh, cuts), as does version 2 (pieces are then found by place alone).
+DATA_VERSION = 3
+READABLE_VERSIONS = (1, 2, 3)
 NO_FLOOR = 255
 TOP_SIZE = 480  # pixels, the longer side of a floor seen from above
 SECTION_COLUMNS = 720  # pixels across a section
@@ -94,9 +104,14 @@ def save_floor_data(
     lower_opacity: float,
     nav: np.ndarray | None = None,
     method: str = "cuts",
+    owners: np.ndarray | None = None,
+    owner_names: list[str] | None = None,
 ) -> Path:
-    """Keeps what the views need of an area (see the top of this module)."""
+    """Keeps what the views need of an area (see the top of this module). `mesh` is every triangle of the area, the
+    pieces the player removed and all, with the part that placed each (`owners`, an index in `owner_names`)."""
     triangles = np.asarray(mesh, dtype=np.float32).reshape(-1, 3, 3)
+    if owners is None or owner_names is None or len(owners) != len(triangles):
+        owners, owner_names = np.zeros(0, dtype=np.int32), None
     nav_triangles = np.asarray(nav if nav is not None else np.zeros((0, 3, 3)), dtype=np.float32).reshape(-1, 3, 3)
     positions = np.array([position for position, _ in markers], dtype=np.float64).reshape(-1, 3)
     categories = np.array([category for _, category in markers], dtype="U16")
@@ -110,6 +125,7 @@ def save_floor_data(
         "shipped": shipped,
         "lowerFloorOpacity": lower_opacity,
         "method": method,
+        "ownerNames": owner_names,
     }
     path = data_file(out, key)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,6 +135,7 @@ def save_floor_data(
             handle,
             triangles=triangles,
             nav=nav_triangles,
+            owners=np.asarray(owners, dtype=np.int32),
             markers=positions,
             categories=categories,
             meta=np.array(json.dumps(meta)),
@@ -135,14 +152,37 @@ class AreaViews:
             self.meta: dict[str, tp.Any] = json.loads(str(data["meta"]))
             triangles = data["triangles"]
             self.nav = data["nav"] if "nav" in data.files else np.zeros((0, 3, 3), dtype=np.float32)
+            owners = data["owners"] if "owners" in data.files else np.zeros(0, dtype=np.int32)
             self.markers = data["markers"]
             self.categories = [str(c) for c in data["categories"]]
         if self.meta.get("version") not in READABLE_VERSIONS:
             raise ValueError("the floor data was written by another version of the Map Maker")
-        self.prepared: Prepared = prepare(triangles, self.meta.get("floors"))
+        # Every triangle of the area, with its part where the data has them; the views are of those not removed.
+        self.all = np.asarray(triangles, dtype=np.float32).reshape(-1, 3, 3)
+        names = self.meta.get("ownerNames")
+        known = isinstance(names, list) and len(owners) == len(self.all)
+        self.owners: np.ndarray | None = np.asarray(owners, dtype=np.int64) if known else None
+        self.owner_names: list[str] | None = [str(n) for n in names] if known and isinstance(names, list) else None
+        self.table = piece_table(self.all, self.owners, self.owner_names)
+        self._removed_key: str | None = None
+        self.removed_found: list[int] = []
+        self.kept = np.arange(len(self.all))
+        self.use_removed([])
+
+    def use_removed(self, removed: list[dict[str, tp.Any]]) -> None:
+        """Prepares the area without the `removed` pieces (again only when they changed)."""
+        key = json.dumps(removed, sort_keys=True)
+        if key == self._removed_key:
+            return
+        self._removed_key = key
+        found = find_removed(self.all, self.owners, self.owner_names, removed, table=self.table)
+        self.removed_found = found.triangles
+        self.kept = np.flatnonzero(~found.removed)
+        self.prepared: Prepared = prepare(self.all[self.kept], self.meta.get("floors"))
         self._passages: PassagePrep | None = None
         # Per side view, the walkable triangle nearest the viewer at each pixel (-1: none), for passages.
         self._section_owner: dict[str, np.ndarray] = {}
+        self._sections: dict[str, dict[str, tp.Any]] = {}
         heights = self.prepared.surfaces.height if self.prepared.surfaces is not None else np.zeros(0)
         self.profile = height_profile(heights, self.prepared.settings["cell"])
         self.low, self.high = shown_heights(self.profile, self.prepared.triangles)
@@ -170,6 +210,23 @@ class AreaViews:
             "shippedCuts": [round(c, 2) for c in apply_overrides(list(self.prepared.auto), self.meta.get("shipped") or {})],
             "method": self.meta.get("method", "cuts"),
             "navmeshTriangles": int(len(self.nav)),
+            **({"pieces": self.pieces()} if self.meta.get("key") != "model" else {}),
+        }
+
+    def pieces(self) -> dict[str, tp.Any]:
+        """The area's pieces for "Remove pieces" (see the top of this module)."""
+        table = self.table
+
+        def packed(values: np.ndarray, dtype: str) -> str:
+            return base64.b64encode(np.ascontiguousarray(values, dtype=dtype).tobytes()).decode("ascii")
+
+        return {
+            "triangle": packed(table.triangle_piece, "<u4"),
+            "part": packed(np.maximum(table.piece_part, 0), "<u4"),
+            "box": packed(table.piece_box.reshape(-1), "<f4"),
+            "triangles": packed(table.piece_triangles, "<u4"),
+            "area": packed(table.piece_area, "<f4"),
+            "parts": table.part_names,
         }
 
     def passages(self) -> PassagePrep:
@@ -185,8 +242,11 @@ class AreaViews:
         outlines: bool = False,
         method: str = "cuts",
         passages: list[dict[str, tp.Any]] | None = None,
+        removed: list[dict[str, tp.Any]] | None = None,
     ) -> dict[str, tp.Any]:
         started = time.monotonic()
+        removed = removed or []
+        self.use_removed(removed)
         if method == "passages":
             plan = plan_passages(self.passages(), overrides={"passages": passages or []})
             floors = plan.floors
@@ -227,13 +287,20 @@ class AreaViews:
             "profile": self.profile,
             "floors": floor_list,
             "markers": marker_list,
+            "removed": list(self.removed_found),
         }
+        if removed:
+            out["section"] = {axis: self.section(axis) for axis in ("x", "z")}
+            out["heights"] = {"low": self.low, "high": self.high}
         if plan.method == "passages":
             found = plan.report.get("passages", {})
             out["places"] = found.get("places", [])
             out["passages"] = {k: v for k, v in found.items() if k != "places"}
             floor_of = np.where(plan.triangle_floor >= 0, np.minimum(plan.triangle_floor, NO_FLOOR - 1), NO_FLOOR)
-            out["triangleFloors"] = base64.b64encode(floor_of.astype(np.uint8).tobytes()).decode("ascii")
+            # For the 3D view, which has every triangle: the removed ones have no floor.
+            every = np.full(len(self.all), NO_FLOOR, dtype=np.int64)
+            every[self.kept] = floor_of
+            out["triangleFloors"] = base64.b64encode(every.astype(np.uint8).tobytes()).decode("ascii")
             out["sectionFloors"] = {}
             for axis in ("x", "z"):
                 owner = self.section_owner(axis)
@@ -308,8 +375,8 @@ class AreaViews:
         return np.stack([x, y], axis=1)
 
     def model(self) -> dict[str, tp.Any]:
-        """The triangles for the 3D view (see the top of this module)."""
-        corners = self.prepared.triangles.reshape(-1, 3).astype(np.float64)
+        """The triangles for the 3D view (see the top of this module): every one, removed or not."""
+        corners = self.all.reshape(-1, 3).astype(np.float64)
         if len(corners) == 0:
             return {"triangles": 0, "min": [0, 0, 0], "max": [0, 0, 0], "positions": ""}
         low, high = corners.min(axis=0), corners.max(axis=0)
@@ -325,7 +392,13 @@ class AreaViews:
     def section(self, axis: str) -> dict[str, tp.Any]:
         """The whole area seen from the side, walls and all (see the top of this module): `x` from the south, `z`
         from the east. Walls and slopes are drawn see-through, brighter where more of them stand one behind another,
-        so the rooms inside show through the outer walls; walkable floor is drawn over them, brighter the nearer."""
+        so the rooms inside show through the outer walls; walkable floor is drawn over them, brighter the nearer.
+        Worked out once for the pieces removed now."""
+        if axis not in self._sections:
+            self._sections[axis] = self._section(axis)
+        return self._sections[axis]
+
+    def _section(self, axis: str) -> dict[str, tp.Any]:
         triangles = self.prepared.triangles
         columns, rows = SECTION_COLUMNS, SECTION_ROWS
         low, high = self.low, self.high
@@ -483,7 +556,8 @@ def serve(out: Path, area: str, events: Events, lines: tp.Iterable[str] | None =
             names = entry.get("names")
             outlines = request.get("outlines") is True
             method = entry.get("method", "cuts")
-            result = views.views(entry.get("cuts", []), names if names else None, outlines, method, entry.get("passages"))
+            removed = clean_pieces(request.get("removed"))
+            result = views.views(entry.get("cuts", []), names if names else None, outlines, method, entry.get("passages"), removed)
             events.emit("views", id=request_id, **result)
         except Exception as error:  # one bad request does not end the views
             events.emit("error", id=request_id, message=f"{type(error).__name__}: {error}")

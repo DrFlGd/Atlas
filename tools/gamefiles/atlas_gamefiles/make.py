@@ -64,6 +64,7 @@ from .pack import (
     write_pack_json,
 )
 from .models import TexturedMesh, is_usable, load_mesh, summary as models_summary
+from .pieces import leave_out, leave_out_of_models, removed_of
 from .render import BACKGROUND, compose, draw_floor, fallback_style, make_frame, map_style, preview_png
 from .safety import UnsafeOutputError, check_output_folder, is_inside, prepare_soulstruct
 from .scene import (
@@ -672,12 +673,20 @@ class MapMaker:
         entry["geometry"] = {"used": used, "navmeshForPassages": nav is not None, **geometry}
         if used is None:
             self.warn(f"{area.name}: no collision or navmesh could be read; the map shows markers only")
+        # The pieces the player removed in Adjust floors (pieces.py) are left out of the floors, the pictures and the
+        # 3D model; the floor data keeps every triangle, so that the panel can put them back.
+        every_triangle, every_owner = mesh, owners
+        removed = removed_of(overrides)
+        if removed:
+            mesh, owners, entry["removedPieces"] = leave_out(mesh, owners, owner_names, removed)
 
         # The game's own models, with their textures and materials (models.py).
         textured: TexturedMesh | None = None
         models_reason: str | None = None
         if self.want_models:
             textured, entry["models"], models_reason = self.read_models(profile, root, area, world, key, say)
+            if removed and textured is not None:
+                textured, entry["removedPieces"]["modelTriangles"] = leave_out_of_models(textured, removed)
 
         # Floors.
         self.token.stop()
@@ -739,13 +748,13 @@ class MapMaker:
         tile_size = int(render_settings.get("tileSize", 256))
         quality = int(render_settings.get("tileQuality", 85))
         opacity = float(render_settings.get("lowerFloorOpacity", 0.4))
-        if len(mesh):
+        if len(every_triangle):
             # For the Adjust floors panel (floorviews.py): kept in the output folder, never in the report zip.
             save_floor_data(
                 self.out,
                 key,
                 area.name,
-                mesh,
+                every_triangle,
                 plan,
                 [(m.position, m.category) for m in world.markers],
                 config.get("floors"),
@@ -754,6 +763,8 @@ class MapMaker:
                 opacity,
                 nav=nav,
                 method=method,
+                owners=every_owner,
+                owner_names=owner_names,
             )
         layers_out: list[LayerOut] = []
         floor_entries = []

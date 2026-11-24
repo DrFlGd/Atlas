@@ -921,6 +921,45 @@ h3 {
   border-color: #ffd64c;
 }
 
+/* Remove pieces: the chosen piece under the 3D view, and the removed ones. */
+.mm-fp-piece {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid #ffd64c;
+  border-radius: var(--atlas-radius);
+}
+
+.mm-fp-piece p {
+  margin: 0;
+}
+
+.mm-fp-removed {
+  margin-top: 14px;
+}
+
+.mm-fp-removed-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.mm-fp-removed-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--atlas-border);
+  border-left: 3px solid #8c1f24;
+  border-radius: var(--atlas-radius);
+  overflow-wrap: anywhere;
+}
+
 /* Compare with a picture. */
 .mm-compare-overlay {
   z-index: 20;

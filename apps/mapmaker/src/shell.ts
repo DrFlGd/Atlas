@@ -115,6 +115,19 @@ export interface FloorEntry {
   mergeAt?: number[];
   method?: FloorMethod;
   passages?: PassageChoice[];
+  /** The pieces removed in Adjust floors (version 3 of the file). */
+  removed?: RemovedPiece[];
+}
+
+/** A piece of an area removed in Adjust floors, as the floor cuts file writes it down (see the helper's
+ * atlas_gamefiles/pieces.py): the collision part it belongs to, its bounds `[x0, y0, z0, x1, y1, z1]` in metres (x
+ * east, y height, z north), how many triangles and square metres it had, and `whole` for a whole part. */
+export interface RemovedPiece {
+  part: string;
+  box: [number, number, number, number, number, number];
+  triangles?: number;
+  area?: number;
+  whole?: true;
 }
 
 /** The player's floor cuts: per game, per area (mAA_BB; `model` for a map made from a 3D model, under its pack
@@ -146,6 +159,19 @@ export interface FloorViewsReady {
   method?: FloorMethod;
   /** Navmesh triangles kept for automatic passages (0: none). */
   navmeshTriangles?: number;
+  /** The area's connected pieces of surface, for Remove pieces (none for a map made from a 3D model). */
+  pieces?: AreaPieces;
+}
+
+/** Each triangle's piece (32-bit), and per piece its part (an index in `parts`, 32-bit), bounds (six 32-bit floats),
+ * triangles (32-bit) and area (32-bit float, m²): base64, little-endian. */
+export interface AreaPieces {
+  triangle: string;
+  part: string;
+  box: string;
+  triangles: string;
+  area: string;
+  parts: string[];
 }
 
 /** The area's triangles: each corner's x, height and z as 16-bit steps from `min` to `max`, base64; for a 3D
@@ -207,6 +233,11 @@ export interface FloorViews {
   triangleFloors?: string;
   /** Automatic passages: per side view, each pixel's floor (255 for none), base64. */
   sectionFloors?: { x: string; z: string };
+  /** Per removed piece asked for, how many of its triangles were found (0: not in this area). */
+  removed?: number[];
+  /** With removed pieces: the section and the heights without them. */
+  section?: { x: Section; z: Section };
+  heights?: { low: number; high: number };
 }
 
 /** How a picture to compare with lies over an area's map: its middle (`x`, `y`, as fractions of the map picture's
@@ -276,6 +307,7 @@ export interface Shell {
     outlines: boolean,
     method: FloorMethod,
     passages: PassageChoice[],
+    removed: RemovedPiece[],
   ): Promise<FloorViews>;
   floorViewsClose(): Promise<void>;
   /** The pictures to compare with, per `game:mAA_BB`. */
@@ -332,7 +364,7 @@ export function createShell(invoke: Invoke): Shell {
     floorOverridesLoadFile: () =>
       invoke('floor_overrides_load_file') as Promise<FloorCutsFile | null>,
     floorViewsOpen: (area) => invoke('floor_views_open', { area }) as Promise<FloorViewsReady>,
-    floorViewsRequest: (area, cuts, names, outlines, method, passages) =>
+    floorViewsRequest: (area, cuts, names, outlines, method, passages, removed) =>
       invoke('floor_views_request', {
         area,
         cuts,
@@ -340,6 +372,7 @@ export function createShell(invoke: Invoke): Shell {
         outlines,
         method,
         passages,
+        removed,
       }) as Promise<FloorViews>,
     floorViewsClose: async () => {
       await invoke('floor_views_close');

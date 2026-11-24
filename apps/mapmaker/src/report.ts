@@ -3,6 +3,7 @@
  */
 
 import type { LevelReport } from './model';
+import type { RemovedPiece } from './shell';
 
 export type SourceStatus = 'ok' | 'partial' | 'failed' | 'missing' | 'not-decoded' | 'timed-out';
 export type GeometrySourceName = 'collision' | 'navmesh' | 'mapPieces';
@@ -464,6 +465,8 @@ export interface FloorPlanReport {
     mergeAt?: number[];
     method?: FloorMethod;
     passages?: PassageChoice[];
+    /** The pieces removed in Adjust floors. */
+    removed?: RemovedPiece[];
   } | null;
   /** The area's floors without the player's own cuts ("Back to automatic"). */
   shipped?: { cuts: number[]; names: string[] | null; passages?: PassageChoice[] };
@@ -544,6 +547,50 @@ export interface MadeArea {
   };
   scene?: MadeScene;
   seconds?: number;
+  /** The pieces removed in Adjust floors, and how many were found and left out. */
+  removedPieces?: RemovedPiecesReport;
+}
+
+/** The pieces the player removed in Adjust floors, as found when the map was made (or drawn again): how many were
+ * asked for and found, the triangles left out, and per piece whether it was found, and how (`part`: by its part,
+ * `place`: by its place alone). With the game's models, also how many of their triangles were left out. */
+export interface RemovedPiecesReport {
+  asked: number;
+  found: number;
+  triangles: number;
+  modelTriangles?: number;
+  pieces?: (RemovedPiece & { found: boolean; by: 'part' | 'place' | null })[];
+}
+
+/** "2 pieces removed by you", with how many were not found. Null when none was removed. */
+export function removedLine(removed: RemovedPiecesReport | undefined): string | null {
+  if (!removed || removed.asked === 0) return null;
+  const missing = removed.asked - removed.found;
+  const line = `${plural(removed.found, 'piece')} removed by you`;
+  if (missing === 0) return line;
+  return `${line}; ${plural(missing, 'removed piece')} not found (${missing === 1 ? 'it is' : 'they are'} not in this map now)`;
+}
+
+/** Whether two removed pieces are the same: the same part, whole or not, and the same bounds. */
+export function sameRecord(a: RemovedPiece, b: RemovedPiece): boolean {
+  return (
+    a.part === b.part &&
+    Boolean(a.whole) === Boolean(b.whole) &&
+    a.box.every((value, k) => Math.abs(value - b.box[k]!) < 0.005)
+  );
+}
+
+/** Whether two lists of removed pieces hold the same pieces, in any order. */
+export function sameRemoved(
+  a: readonly RemovedPiece[] | undefined,
+  b: readonly RemovedPiece[] | undefined,
+): boolean {
+  const first = a ?? [];
+  const second = b ?? [];
+  return (
+    first.length === second.length &&
+    first.every((piece) => second.some((other) => sameRecord(piece, other)))
+  );
 }
 
 export interface MakeReport {
@@ -798,7 +845,13 @@ export function floorRangeText(floor: MadeFloor): string {
 export function waitingCuts(
   area: MadeArea,
   saved:
-    | { cuts?: number[]; names?: string[]; method?: FloorMethod; passages?: PassageChoice[] }
+    | {
+        cuts?: number[];
+        names?: string[];
+        method?: FloorMethod;
+        passages?: PassageChoice[];
+        removed?: RemovedPiece[];
+      }
     | undefined,
   usedOwn: boolean,
 ): boolean {
@@ -811,7 +864,8 @@ export function waitingCuts(
     !same(saved.cuts, used?.cuts) ||
     !same(saved.names, used?.names) ||
     !same(saved.method, used?.method) ||
-    !same(saved.passages, used?.passages)
+    !same(saved.passages, used?.passages) ||
+    !sameRemoved(saved.removed, used?.removed)
   );
 }
 

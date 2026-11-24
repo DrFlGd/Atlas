@@ -8,6 +8,8 @@ import sys
 import typing as tp
 from pathlib import Path
 
+from .pieces import clean_pieces
+
 
 def config_folder() -> Path:
     bundle = getattr(sys, "_MEIPASS", None)
@@ -45,9 +47,13 @@ MAX_NAMES = 33
 MAX_NAME = 80
 MAX_PASSAGES = 256
 FLOOR_METHODS = ("passages", "cuts")
-# The floor cuts file (floor-overrides.json): version 2 adds `version`, and per area `method` and `passages`.
-# Version 1 files (no `version`) still load.
-FLOOR_OVERRIDES_VERSION = 2
+# The floor cuts file (floor-overrides.json): version 2 adds `version`, and per area `method` and `passages`; version
+# 3 adds per area `removed` (the pieces the player removed, see pieces.py). Version 1 files (no `version`) and
+# version 2 files still load; an older Map Maker reading a version 3 file leaves `removed` out.
+FLOOR_OVERRIDES_VERSION = 3
+# What an entry holds besides its removed pieces: with none of these, the entry only removes pieces, and the area's
+# floors are as without the player's own entry.
+FLOOR_KEYS = ("cuts", "splitAt", "mergeAt", "names", "method", "passages")
 
 
 def floor_method(config: dict[str, tp.Any], overrides: dict[str, tp.Any] | None = None, asked: str | None = None) -> str:
@@ -69,7 +75,7 @@ def clean_floor_entry(value: tp.Any) -> dict[str, tp.Any] | None:
     """One area's floor overrides as the player's own file gives them, kept to what floors.py and passages.py read:
     `cuts`, `splitAt` and `mergeAt` (heights in metres), `names` (lowest first), `method` (passages or cuts) and
     `passages` (`[{x, z, show}]`: which storey to show on the main floor, upper or lower, in the overlapping place
-    at x, z). None when nothing usable is left."""
+    at x, z) and `removed` (the pieces the player removed, pieces.clean_piece). None when nothing usable is left."""
     if not isinstance(value, dict):
         return None
     entry: dict[str, tp.Any] = {}
@@ -98,6 +104,9 @@ def clean_floor_entry(value: tp.Any) -> dict[str, tp.Any] | None:
     names = value.get("names")
     if isinstance(names, list):
         entry["names"] = [str(n)[:MAX_NAME] if isinstance(n, str) else "" for n in names[:MAX_NAMES]]
+    removed = clean_pieces(value.get("removed"))
+    if removed:
+        entry["removed"] = removed
     return entry or None
 
 
@@ -125,11 +134,15 @@ def chosen_floor_overrides(
     config: dict[str, tp.Any], own: dict[str, dict[str, tp.Any]], area_id: str
 ) -> tuple[dict[str, tp.Any], str | None]:
     """The floor overrides of an area and where they come from: the player's own entry replaces the shipped one
-    whole (`"yours"`), else the config's (`"shipped"`), else none (None)."""
+    whole (`"yours"`), else the config's (`"shipped"`), else none (None). An own entry that only removes pieces
+    (after "Back to automatic") keeps the shipped floors, with its removed pieces."""
     key = area_key(area_id)
-    if key in own:
-        return own[key], "yours"
     shipped = floor_overrides(config, area_id)
+    if key in own:
+        entry = own[key]
+        if entry.get("removed") and not any(k in entry for k in FLOOR_KEYS):
+            return {**shipped, "removed": entry["removed"]}, "yours"
+        return entry, "yours"
     return shipped, ("shipped" if shipped else None)
 
 
