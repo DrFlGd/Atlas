@@ -427,10 +427,27 @@ test('with a controller: the D-pad holds a location, A goes to it, B goes back',
   await openKeep(page);
   const status = page.getByTestId('scene-status');
   const target = page.getByTestId('pad-reticle-target');
-  // The D-pad (right) holds the next location that way.
+  // The D-pad (right) holds the next location that way, once the view has come to rest on it
+  // (A opens what is under the crosshair when it is pressed, so not while the view still moves).
+  await status.evaluate((element) => {
+    delete (element as HTMLElement).dataset.onScreen;
+  });
   await press(15);
+  await expect(status).toHaveAttribute('data-on-screen', /\[/, { timeout: 20_000 });
   await expect(target).toHaveCount(1, { timeout: 10_000 });
-  const held = (await target.getAttribute('data-location'))!;
+  // The same location held twice, a little apart: the view no longer moves under the crosshair.
+  let held = '';
+  await expect
+    .poll(
+      async () => {
+        const first = await target.getAttribute('data-location');
+        await page.waitForTimeout(400);
+        held = (await target.getAttribute('data-location')) ?? '';
+        return first !== null && first === held;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   // A opens it, and the view goes to it.
   await press(0);
   await expect(status).toHaveAttribute('data-selected', held);
