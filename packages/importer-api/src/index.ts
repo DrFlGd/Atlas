@@ -2097,6 +2097,7 @@ export const importerSchema = z
               id: z.string().regex(GAME_FILES_KIND_PATTERN),
               title: z.string().trim().min(1).max(100),
               description: z.string().trim().min(1).max(500),
+              download: z.object({ description: z.string().trim().min(1).max(500) }).optional(),
             }),
           )
           .min(1)

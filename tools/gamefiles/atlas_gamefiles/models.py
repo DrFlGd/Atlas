@@ -18,14 +18,18 @@ Where things are (Dark Souls Remastered, and Bloodborne the same way where noted
 The file reader process reads it (worker.py, source `models`) and writes, into the folder it is given:
 `models.npz` (every placed triangle in the game's own coordinates, oriented so that its front faces the way the
 model's normals do; its texture coordinates; its material; the part that placed it), `models.json` (the materials,
-the textures and the report) and one PNG per texture (`t<n>.png`), each at its own size. Nothing is read twice and
-nothing in the game folder is changed.
+the textures and the report) and one PNG per texture (`t<n>.png`), each at its own size; textures of the same
+pixels under other names share the first one's PNG. Nothing is read twice and nothing in the game folder is changed.
 
 Every model and texture is read on its own: one that fails is counted and named in the report, and the rest go on.
+The report counts the textures read, those found that could not be read (`failedCount`, each texture once however
+many copies of it were tried) and those found nowhere (`missingCount`).
 """
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 import math
 import time
@@ -712,7 +716,11 @@ def read_map_models(
             alpha_wanted[material["texture"]] = True
     formats: Counter[str] = Counter()
     failed: list[str] = []
+    failed_stems: set[str] = set()
     missing: list[str] = []
+    written: dict[str, str] = {}  # a PNG's digest -> its file, so the same pixels are written once
+    shared = 0
+    png_bytes = 0
     found_in: Counter[str] = Counter()
     pending = {name.lower(): i for i, name in enumerate(texture_names)}
     largest = (0, 0)
@@ -737,12 +745,22 @@ def read_map_models(
                 except Cancelled:
                     raise
                 except Exception as error:
+                    failed_stems.add(stem)
                     if len(failed) < LIST_LIMIT:
                         failed.append(f"{stem}: {type(error).__name__}: {error}"[:300])
                     continue
                 keep_alpha = alpha_wanted[index] and picture.getchannel("A").getextrema()[0] < 255
-                file_name = f"t{index}.png"
-                (picture if keep_alpha else picture.convert("RGB")).save(output / file_name, "PNG", compress_level=6)
+                encoded = io.BytesIO()
+                (picture if keep_alpha else picture.convert("RGB")).save(encoded, "PNG", compress_level=6)
+                digest = hashlib.sha256(encoded.getbuffer()).hexdigest()
+                if digest in written:
+                    file_name = written[digest]
+                    shared += 1
+                else:
+                    file_name = written[digest] = f"t{index}.png"
+                    (output / file_name).write_bytes(encoded.getbuffer())
+                    png_bytes += encoded.getbuffer().nbytes
+                del encoded
                 width, height = picture.size
                 textures[index].update(
                     {"file": file_name, "width": width, "height": height, "format": fmt, "alpha": keep_alpha, "from": source.label}
@@ -754,7 +772,8 @@ def read_map_models(
                 del picture
                 break
         pending = {stem: i for stem, i in pending.items() if not textures[i].get("file")}
-    missing = sorted(texture_names[i] for i in pending.values())
+    missing = sorted(texture_names[i] for stem, i in pending.items() if stem not in failed_stems)
+    unreadable = sorted(texture_names[i] for stem, i in pending.items() if stem in failed_stems)
 
     mesh = TexturedMesh(
         triangles=np.concatenate(tris_out) if tris_out else np.zeros((0, 3, 3), dtype=np.float32),
@@ -797,7 +816,11 @@ def read_map_models(
             "pixels": pixels,
             "missing": missing[:LIST_LIMIT],
             "missingCount": len(missing),
+            "failedCount": len(unreadable),
+            "failedNames": unreadable[:LIST_LIMIT],
             "failed": failed,
+            "sameAsAnother": shared,
+            "pngBytes": png_bytes,
             "binders": finder.binders[:LIST_LIMIT],
             "bindersSearched": len(finder.binders),
             "searchedEveryArea": finder.searched_all,
@@ -809,8 +832,11 @@ def read_map_models(
     save_mesh(mesh)
     result.data = report
     result.finish()
-    if result.status == "ok" and (missing_models or missing):
-        result.note = f"{len(missing_models)} placed models and {len(missing)} textures were not found"
+    if result.status == "ok" and (missing_models or missing or unreadable):
+        result.note = (
+            f"{len(missing_models)} placed models and {len(missing)} textures were not found, "
+            f"{len(unreadable)} textures could not be read"
+        )
     result.seconds = time.monotonic() - started
     return result
 
@@ -819,9 +845,11 @@ def summary(report: dict[str, tp.Any]) -> str:
     """One line of what was read, for the progress and the report."""
     models = report.get("models", {})
     textures = report.get("textures", {})
+    unreadable = int(textures.get("failedCount", 0) or 0)
     return (
         f"{models.get('read', 0)} of {models.get('files', 0)} models, {report.get('triangles', 0):,} triangles, "
         f"{textures.get('read', 0)} of {textures.get('wanted', 0)} textures"
+        + (f" ({unreadable} could not be read)" if unreadable else "")
     )
 
 

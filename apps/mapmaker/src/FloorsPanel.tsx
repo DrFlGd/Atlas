@@ -11,6 +11,19 @@ import { ComparePanel } from './Compare';
 import { Floors3D, SectionPicture, TopPicture } from './FloorViews';
 import { MapStyleChoice } from './MapStyleChoice';
 import {
+  addRemoved,
+  offersWholePart,
+  partRecord,
+  pieceRecord,
+  pieceText,
+  piecesOf,
+  putBack,
+  readPieces,
+  removedIndexOf,
+  startRemoved,
+  triangleMarks,
+} from './pieces';
+import {
   addCut,
   bandOf,
   canAddCut,
@@ -64,6 +77,7 @@ import {
   type FloorOverrides,
   type FloorViews,
   type FloorViewsReady,
+  type RemovedPiece,
   type Shell,
 } from './shell';
 
@@ -106,6 +120,7 @@ export function FloorsPanel(props: Props) {
   const [draft, setDraft] = useState<FloorsDraft>(() => startDraft(area));
   const [method, setMethod] = useState<FloorMethod>(() => startMethod(area));
   const [choices, setChoices] = useState<PassageChoice[]>(() => startChoices(area));
+  const [removed, setRemoved] = useState<RemovedPiece[]>(() => startRemoved(area));
   const [baseline, setBaseline] = useState<string>(() =>
     JSON.stringify(
       methodEntry(
@@ -113,9 +128,13 @@ export function FloorsPanel(props: Props) {
         startDraft(area),
         startChoices(area),
         area.floors?.length ?? 1,
+        startRemoved(area),
       ),
     ),
   );
+  // Remove pieces: pressing the 3D view chooses a piece (an index in the area's pieces) in place of an item.
+  const [picking, setPicking] = useState(false);
+  const [chosen, setChosen] = useState<number | null>(null);
   const [place, setPlace] = useState<number | null>(null);
   const [comparing, setComparing] = useState(false);
   const [ready, setReady] = useState<FloorViewsReady | null>(null);
@@ -140,12 +159,23 @@ export function FloorsPanel(props: Props) {
 
   const running = status?.state === 'running' || status?.state === 'cancelling';
   const remaking = running && status.kind === 'remake';
-  const profile: HeightProfile | undefined = ready?.profile ?? area.floorPlan?.profile;
-  const low = ready?.heights.low ?? profile?.low ?? 0;
-  const high =
-    ready?.heights.high ?? (profile && profile.high > profile.low ? profile.high : low + 1);
+  // With pieces removed, the views give the profile, heights and section without them.
+  const profile: HeightProfile | undefined =
+    views?.profile ?? ready?.profile ?? area.floorPlan?.profile;
+  const heights = views?.heights ?? ready?.heights;
+  const low = heights?.low ?? profile?.low ?? 0;
+  const high = heights?.high ?? (profile && profile.high > profile.low ? profile.high : low + 1);
   const passages = method === 'passages';
   const choicesKey = JSON.stringify(choices);
+  const removedKey = JSON.stringify(removed);
+  const table = useMemo(() => (ready?.pieces ? readPieces(ready.pieces) : null), [ready]);
+  const marks = useMemo(
+    () =>
+      table && (picking || removed.length > 0)
+        ? triangleMarks(table, removed, picking ? chosen : null)
+        : null,
+    [table, removed, picking, chosen],
+  );
 
   useEffect(() => {
     titleRef.current?.focus();
@@ -177,10 +207,10 @@ export function FloorsPanel(props: Props) {
   );
 
   // Redraw the views a moment after the cuts or names change; one request at a time, the latest wins.
-  const wanted = useRef({ draft, outlines, method, choices });
+  const wanted = useRef({ draft, outlines, method, choices, removed });
   useEffect(() => {
-    wanted.current = { draft, outlines, method, choices };
-  }, [draft, outlines, method, choices]);
+    wanted.current = { draft, outlines, method, choices, removed };
+  }, [draft, outlines, method, choices, removed]);
   // What each answer was asked for: with passages, the views are those of these choices only.
   const [askedKey, setAskedKey] = useState('');
   // The last views of passages, shown while new ones are drawn.
@@ -207,6 +237,7 @@ export function FloorsPanel(props: Props) {
           now.outlines,
           now.method,
           now.method === 'passages' ? now.choices : [],
+          now.removed,
         );
         setViews(answer);
         if (answer.method === 'passages') setPassageViews(answer);
@@ -226,7 +257,7 @@ export function FloorsPanel(props: Props) {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [ready, running, draft, outlines, method, choicesKey, redraw]);
+  }, [ready, running, draft, outlines, method, choicesKey, removedKey, redraw]);
 
   const change = (next: FloorsDraft) => {
     setDraft(next);
@@ -359,7 +390,27 @@ export function FloorsPanel(props: Props) {
   );
   const addable = canAddCut(draft, newCut, low, high);
 
-  const entryNow = methodEntry(method, draft, choices, floorCount);
+  const entryNow = methodEntry(method, draft, choices, floorCount, removed);
+  // Remove pieces: the chosen piece, and the list of removed ones.
+  const chosenRemoved = table && chosen !== null ? removedIndexOf(table, removed, chosen) : -1;
+  const changeRemoved = (next: RemovedPiece[]) => {
+    setRemoved(next);
+    setMessage(null);
+  };
+  const removeChosen = (whole: boolean) => {
+    if (!table || chosen === null) return;
+    const part = table.part[chosen] ?? 0;
+    changeRemoved(
+      addRemoved(removed, whole ? partRecord(table, part) : pieceRecord(table, chosen)),
+    );
+  };
+  const showRemoved = (record: RemovedPiece) => {
+    if (!table) return;
+    setLower('3d');
+    setPicking(true);
+    setFocus(null);
+    setChosen(piecesOf(table, record)[0] ?? null);
+  };
   const save = async (): Promise<boolean> => {
     setProblem(null);
     try {
@@ -374,16 +425,24 @@ export function FloorsPanel(props: Props) {
   const backToAutomatic = async () => {
     setProblem(null);
     try {
-      props.onOverrides(await api.floorOverridesSet(game, area.key, null));
+      // The removed pieces stay removed: they are not floors.
+      props.onOverrides(
+        await api.floorOverridesSet(game, area.key, removed.length > 0 ? { removed } : null),
+      );
       const next = shippedDraft(area, ready?.shippedCuts);
       const nextChoices = [...(area.floorPlan?.shipped?.passages ?? [])];
       setDraft(next);
       setChoices(nextChoices);
-      setBaseline(JSON.stringify(methodEntry(method, next, nextChoices, floorCount)));
+      setBaseline(JSON.stringify(methodEntry(method, next, nextChoices, floorCount, removed)));
+      const kept =
+        removed.length > 0
+          ? ` The ${removed.length === 1 ? 'piece you removed stays' : 'pieces you removed stay'} removed.`
+          : '';
       setMessage(
-        passages
+        (passages
           ? 'Your choices for this area are cleared: each overlapping spot shows its upper storey again. Press Make this area again to redraw its map.'
-          : 'Your cuts for this area are cleared: it has the Map Maker’s own floors again. Press Make this area again to redraw its map.',
+          : 'Your cuts for this area are cleared: it has the Map Maker’s own floors again. Press Make this area again to redraw its map.') +
+          kept,
       );
     } catch (error) {
       setProblem(errorText(error));
@@ -418,10 +477,15 @@ export function FloorsPanel(props: Props) {
         const nextMethod = entry.method ?? method;
         const next = { cuts: [...(entry.cuts ?? draft.cuts)], names: entry.names ?? [] };
         const nextChoices = [...(entry.passages ?? [])];
+        const nextRemoved = [...(entry.removed ?? [])];
         setMethod(nextMethod);
         setDraft(next);
         setChoices(nextChoices);
-        setBaseline(JSON.stringify(methodEntry(nextMethod, next, nextChoices, floorCount)));
+        setRemoved(nextRemoved);
+        setChosen(null);
+        setBaseline(
+          JSON.stringify(methodEntry(nextMethod, next, nextChoices, floorCount, nextRemoved)),
+        );
       }
       setMessage(
         `Loaded the floor cuts of ${plural(file.areas, 'area')} from ${file.name}. Make map, or Make this area again, uses them.`,
@@ -438,7 +502,7 @@ export function FloorsPanel(props: Props) {
     setMessage(null);
   };
   const maxBar = Math.max(1, ...(profile?.areas ?? [1]));
-  const section = ready?.section[axis] ?? null;
+  const section = (views?.section ?? ready?.section)?.[axis] ?? null;
   const slots = useMemo(() => {
     if (!section) return [];
     const across = places.map((p) => ({
@@ -461,8 +525,9 @@ export function FloorsPanel(props: Props) {
       className="mm-overlay"
       onKeyDown={(event) => {
         if (event.key !== 'Escape' || dragging.current !== null) return;
-        // Back from an item the 3D view went to, first.
+        // Back from an item the 3D view went to, or a chosen piece, first.
         if (focus) setFocus(null);
+        else if (chosen !== null) setChosen(null);
         else if (full3d) setFull3d(false);
         else props.onClose();
       }}
@@ -825,6 +890,20 @@ export function FloorsPanel(props: Props) {
                   >
                     Outlines
                   </button>
+                  {table && (
+                    <button
+                      type="button"
+                      className="button"
+                      aria-pressed={picking}
+                      onClick={() => {
+                        setPicking(!picking);
+                        setChosen(null);
+                        setFocus(null);
+                      }}
+                    >
+                      Remove pieces
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="button"
@@ -853,6 +932,11 @@ export function FloorsPanel(props: Props) {
                     label={`${area.name} in 3D, ${nameOf(shown)} chosen`}
                     describe={describe}
                     focus={focus}
+                    picking={picking && table !== null}
+                    marks={marks}
+                    onPickSurface={(triangle) => {
+                      setChosen(triangle === null ? null : (table?.triangle[triangle] ?? null));
+                    }}
                     onPick={(index) => {
                       if (index === null) {
                         setFocus(null);
@@ -888,7 +972,82 @@ export function FloorsPanel(props: Props) {
                     ? 'Each walkable surface is in the colour of its floor, walls and slopes grey; the chosen floor is bright. Large white dots are the overlapping spots (the chosen one yellow).'
                     : 'Each cut is a see-through level in the colour of the floor above it; the chosen floor is bright.'}{' '}
                   Outlines draws the edges of the walls and floors.
+                  {removed.length > 0 && !picking ? ' Removed pieces are dark red.' : ''}
                 </p>
+                {picking && table && (
+                  <div className="mm-fp-piece" role="group" aria-label="Remove pieces">
+                    {chosen === null ? (
+                      <p className="small">
+                        Press a piece of the map in the 3D view to choose it: a stray panel, say,
+                        that is not part of the map. Drag to turn the view as before; only a press
+                        without a drag chooses.
+                      </p>
+                    ) : (
+                      <>
+                        <p className="small" role="status">
+                          <strong>{chosenRemoved >= 0 ? 'Removed: ' : 'Chosen: '}</strong>
+                          {pieceText(
+                            chosenRemoved >= 0
+                              ? removed[chosenRemoved]!
+                              : pieceRecord(table, chosen),
+                          )}
+                          .
+                        </p>
+                        <div className="mm-row">
+                          {chosenRemoved >= 0 ? (
+                            <button
+                              type="button"
+                              className="button"
+                              onClick={() => {
+                                changeRemoved(putBack(removed, chosenRemoved));
+                              }}
+                            >
+                              Put back
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="button button-primary"
+                                onClick={() => {
+                                  removeChosen(false);
+                                }}
+                              >
+                                Remove this piece
+                              </button>
+                              {offersWholePart(table, chosen) && (
+                                <button
+                                  type="button"
+                                  className="button"
+                                  onClick={() => {
+                                    removeChosen(true);
+                                  }}
+                                >
+                                  Remove the whole part ({table.parts[table.part[chosen] ?? 0]},{' '}
+                                  {plural(table.partPieces[table.part[chosen] ?? 0] ?? 0, 'piece')})
+                                </button>
+                              )}
+                            </>
+                          )}
+                          <button
+                            type="button"
+                            className="button"
+                            onClick={() => {
+                              setChosen(null);
+                            }}
+                          >
+                            Choose nothing
+                          </button>
+                        </div>
+                      </>
+                    )}
+                    <p className="muted small">
+                      The chosen piece is yellow and the rest of its part pale yellow; removed
+                      pieces are dark red. Removed pieces are left out of this area’s floors, its
+                      map and its 3D model when you press Make this area again.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
             {lower === 'top' && (
@@ -1140,6 +1299,20 @@ export function FloorsPanel(props: Props) {
                 from another cut.
               </p>
             )}
+            {table && (
+              <RemovedList
+                removed={removed}
+                found={views?.removed ?? null}
+                disabled={running}
+                onShow={showRemoved}
+                onPutBack={(index) => {
+                  changeRemoved(putBack(removed, index));
+                }}
+                onPutAllBack={() => {
+                  changeRemoved([]);
+                }}
+              />
+            )}
           </div>
         </div>
 
@@ -1271,8 +1444,8 @@ export function FloorsPanel(props: Props) {
             </button>
           </div>
           <p className="muted small">
-            The file holds your cuts, floor names and passage choices of every area of this game,
-            and nothing of the game itself.
+            The file holds your cuts, floor names, passage choices and removed pieces of every area
+            of this game, and nothing of the game itself.
           </p>
         </footer>
       </section>
@@ -1391,6 +1564,79 @@ function PlacesList(props: {
               );
             })}
           </ol>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Remove pieces: the pieces removed from the area, each with Show and Put back, and Put all back. */
+function RemovedList(props: {
+  removed: readonly RemovedPiece[];
+  /** Per removed piece, how many of its triangles the views found (null: not drawn yet). */
+  found: readonly number[] | null;
+  disabled: boolean;
+  onShow: (piece: RemovedPiece) => void;
+  onPutBack: (index: number) => void;
+  onPutAllBack: () => void;
+}) {
+  const { removed, found } = props;
+  return (
+    <div className="mm-fp-removed">
+      <h3>Removed pieces</h3>
+      {removed.length === 0 ? (
+        <p className="small muted">
+          None. To leave a stray piece out of this area’s map, such as a panel floating over it,
+          press Remove pieces by the 3D view, then press the piece.
+        </p>
+      ) : (
+        <>
+          <ol className="mm-fp-removed-list">
+            {removed.map((piece, index) => (
+              <li key={`${piece.part}|${piece.whole ? 'whole' : piece.box.join()}`}>
+                <div className="small">
+                  {pieceText(piece)}
+                  {found?.length === removed.length && found[index] === 0 ? (
+                    <span className="mm-tone-warn"> · not found in this area</span>
+                  ) : null}
+                </div>
+                <div className="mm-row">
+                  <button
+                    type="button"
+                    className="button"
+                    onClick={() => {
+                      props.onShow(piece);
+                    }}
+                  >
+                    Show
+                  </button>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={props.disabled}
+                    onClick={() => {
+                      props.onPutBack(index);
+                    }}
+                  >
+                    Put back
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className="mm-row">
+            <button
+              type="button"
+              className="button"
+              disabled={props.disabled}
+              onClick={props.onPutAllBack}
+            >
+              Put all back
+            </button>
+            <span className="small muted">
+              Press Make this area again to draw the map with them again.
+            </span>
+          </div>
         </>
       )}
     </div>

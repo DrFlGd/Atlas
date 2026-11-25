@@ -3,6 +3,7 @@
  */
 
 import type { LevelReport } from './model';
+import type { RemovedPiece } from './shell';
 
 export type SourceStatus = 'ok' | 'partial' | 'failed' | 'missing' | 'not-decoded' | 'timed-out';
 export type GeometrySourceName = 'collision' | 'navmesh' | 'mapPieces';
@@ -355,8 +356,22 @@ export interface MadeScene {
   look?: Look3d;
   /** Why it was made from the collision when the game's models were asked for. */
   lookNote?: string;
-  /** With the game's models: the textures kept (each at its own size at the finest level). */
-  textures?: { kept?: number; leftOut?: number; bytes?: number; largestCellBytes?: number };
+  /**
+   * With the game's models: the materials whose texture was kept (each at its own size at the finest level), and
+   * the textures the models show: wanted, read, found but not readable (`failed`) and not found (`missing`).
+   * `eachOnce`: each texture is in one file of each level, however many cells show it.
+   */
+  textures?: {
+    kept?: number;
+    leftOut?: number;
+    bytes?: number;
+    largestCellBytes?: number;
+    wanted?: number;
+    read?: number;
+    failed?: number;
+    missing?: number;
+    eachOnce?: boolean;
+  };
   /** Triangles read from the game, and of the model's finest level once cleaned. */
   trianglesBefore: number;
   trianglesAfter?: number;
@@ -464,6 +479,8 @@ export interface FloorPlanReport {
     mergeAt?: number[];
     method?: FloorMethod;
     passages?: PassageChoice[];
+    /** The pieces removed in Adjust floors. */
+    removed?: RemovedPiece[];
   } | null;
   /** The area's floors without the player's own cuts ("Back to automatic"). */
   shipped?: { cuts: number[]; names: string[] | null; passages?: PassageChoice[] };
@@ -481,7 +498,7 @@ export interface FloorPlanReport {
 export type MapStyleId = 'shaded' | 'outlines' | 'floors' | 'textured' | 'textured-outlines';
 
 export const TEXTURES_NOTE =
-  'Drawn from the game’s own models and textures; an area whose models cannot be read is height shaded';
+  'Drawn from the game’s own models and textures; an area whose models or textures cannot be read is height shaded';
 
 export const MAP_STYLES: { id: MapStyleId; label: string; available: boolean }[] = [
   { id: 'shaded', label: 'Height shaded', available: true },
@@ -544,6 +561,50 @@ export interface MadeArea {
   };
   scene?: MadeScene;
   seconds?: number;
+  /** The pieces removed in Adjust floors, and how many were found and left out. */
+  removedPieces?: RemovedPiecesReport;
+}
+
+/** The pieces the player removed in Adjust floors, as found when the map was made (or drawn again): how many were
+ * asked for and found, the triangles left out, and per piece whether it was found, and how (`part`: by its part,
+ * `place`: by its place alone). With the game's models, also how many of their triangles were left out. */
+export interface RemovedPiecesReport {
+  asked: number;
+  found: number;
+  triangles: number;
+  modelTriangles?: number;
+  pieces?: (RemovedPiece & { found: boolean; by: 'part' | 'place' | null })[];
+}
+
+/** "2 pieces removed by you", with how many were not found. Null when none was removed. */
+export function removedLine(removed: RemovedPiecesReport | undefined): string | null {
+  if (!removed || removed.asked === 0) return null;
+  const missing = removed.asked - removed.found;
+  const line = `${plural(removed.found, 'piece')} removed by you`;
+  if (missing === 0) return line;
+  return `${line}; ${plural(missing, 'removed piece')} not found (${missing === 1 ? 'it is' : 'they are'} not in this map now)`;
+}
+
+/** Whether two removed pieces are the same: the same part, whole or not, and the same bounds. */
+export function sameRecord(a: RemovedPiece, b: RemovedPiece): boolean {
+  return (
+    a.part === b.part &&
+    Boolean(a.whole) === Boolean(b.whole) &&
+    a.box.every((value, k) => Math.abs(value - b.box[k]!) < 0.005)
+  );
+}
+
+/** Whether two lists of removed pieces hold the same pieces, in any order. */
+export function sameRemoved(
+  a: readonly RemovedPiece[] | undefined,
+  b: readonly RemovedPiece[] | undefined,
+): boolean {
+  const first = a ?? [];
+  const second = b ?? [];
+  return (
+    first.length === second.length &&
+    first.every((piece) => second.some((other) => sameRecord(piece, other)))
+  );
 }
 
 export interface MakeReport {
@@ -687,10 +748,9 @@ export function sceneLines(scene: MadeScene | undefined): string[] {
   if (!scene) return [];
   if (!scene.made) return [`Not made: ${scene.reason ?? 'unknown reason'}`];
   const levels = scene.levels ?? [];
-  const textures = scene.textures?.kept ?? 0;
   return [
     scene.look === 'models'
-      ? `From the game’s models${textures > 0 ? `, ${plural(textures, 'texture')} at their own size` : ''}`
+      ? `From the game’s models${texturesText(scene.textures)}`
       : scene.look === 'collision'
         ? 'From the collision'
         : null,
@@ -701,6 +761,26 @@ export function sceneLines(scene: MadeScene | undefined): string[] {
     `${plural(scene.cells ?? 0, 'cell')}, ${plural(scene.files ?? 0, 'file')}, ${sizeText(scene.bytes ?? 0)}`,
     `${secondsText(scene.seconds ?? 0)} s`,
   ].filter((line): line is string => line !== null);
+}
+
+/** ", 120 of 124 textures read at their own size (3 could not be read, 1 not found)", or for a report from before
+ * those counts, ", 4 textures at their own size". */
+function texturesText(textures: MadeScene['textures']): string {
+  if (!textures) return '';
+  if (textures.wanted === undefined || textures.read === undefined) {
+    const kept = textures.kept ?? 0;
+    return kept > 0 ? `, ${plural(kept, 'texture')} at their own size` : '';
+  }
+  if (textures.wanted === 0) return ', no textures';
+  const failed = textures.failed ?? 0;
+  const missing = textures.missing ?? 0;
+  const lost = [
+    failed > 0 ? `${count(failed)} could not be read` : null,
+    missing > 0 ? `${count(missing)} not found` : null,
+  ].filter((part): part is string => part !== null);
+  return `, ${count(textures.read)} of ${plural(textures.wanted, 'texture')} read at their own size${
+    lost.length > 0 ? ` (${lost.join(', ')})` : ''
+  }`;
 }
 
 /** What to look at in an area of a made map, in plain words; empty when all went as expected. */
@@ -798,7 +878,13 @@ export function floorRangeText(floor: MadeFloor): string {
 export function waitingCuts(
   area: MadeArea,
   saved:
-    | { cuts?: number[]; names?: string[]; method?: FloorMethod; passages?: PassageChoice[] }
+    | {
+        cuts?: number[];
+        names?: string[];
+        method?: FloorMethod;
+        passages?: PassageChoice[];
+        removed?: RemovedPiece[];
+      }
     | undefined,
   usedOwn: boolean,
 ): boolean {
@@ -811,7 +897,8 @@ export function waitingCuts(
     !same(saved.cuts, used?.cuts) ||
     !same(saved.names, used?.names) ||
     !same(saved.method, used?.method) ||
-    !same(saved.passages, used?.passages)
+    !same(saved.passages, used?.passages) ||
+    !sameRemoved(saved.removed, used?.removed)
   );
 }
 

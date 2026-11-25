@@ -9,6 +9,7 @@ import {
   type OwnLocation,
   type OwnLocations,
   type OwnName,
+  type OwnTypeLook,
   type PackData,
   type Picture,
   type Region,
@@ -132,7 +133,7 @@ export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnL
     }
     locations.push(location);
   }
-  const named = namedMapsAndLevels(data, own.names);
+  const named = withTypeLooks(namedMapsAndLevels(data, own.names), own.typeLooks);
   if (
     groups.length === 0 &&
     categories.length === 0 &&
@@ -145,7 +146,7 @@ export function mergeOwnLocations(data: PackData, own: OwnLocations): MergedOwnL
     data: {
       ...named,
       categoryGroups: [...data.categoryGroups, ...groups],
-      categories: [...data.categories, ...categories],
+      categories: [...named.categories, ...categories],
       regions: [...data.regions, ...regions],
       locations: [...data.locations, ...locations],
       guides: [...data.guides, ...guides],
@@ -173,6 +174,89 @@ export function namedMapsAndLevels(
   const layers = data.layers.map(rename);
   const same = <T>(a: readonly T[], b: readonly T[]) => a.every((record, i) => record === b[i]);
   return same(maps, data.maps) && same(layers, data.layers) ? data : { ...data, maps, layers };
+}
+
+// ---------------------------------------------------------------------------
+// The person's colours and icons of the pack's types
+
+/** The colour and icon of a type, as a look gives them or the pack does. */
+export type TypeLookFields = Pick<Category, 'color' | 'icon'>;
+
+/**
+ * A type as it is shown: the pack's, with the person's colour and icon in
+ * place of its own when they chose one (`look`). The one place the shown
+ * colour and icon of a type are made, so the map, the 3D view, the
+ * filters, search, cards and lists all show the same. A type with a look
+ * is drawn with it, not with the map's own icon (`picture`), so the choice
+ * shows wherever the type does.
+ */
+export function typeWithLook(category: Category, look: OwnTypeLook | undefined): Category {
+  if (!look) return category;
+  const color = look.color ?? category.color;
+  const icon = look.icon ?? category.icon;
+  if (color === category.color && icon === category.icon && category.picture === undefined) {
+    return category;
+  }
+  const { picture: _picture, ...rest } = category;
+  return { ...rest, color, icon };
+}
+
+/**
+ * The pack's data with the person's colours and icons of its types in
+ * place of the pack's (see {@link typeWithLook}): the same data when no
+ * look applies. A look of a type the pack does not have is kept for when
+ * it comes back, and changes nothing.
+ */
+export function withTypeLooks(data: PackData, looks: readonly OwnTypeLook[] | undefined): PackData {
+  if (!looks || looks.length === 0) return data;
+  const byId = new Map(looks.map((look) => [look.id, look]));
+  const categories = data.categories.map((category) =>
+    typeWithLook(category, byId.get(category.id)),
+  );
+  return categories.some((category, i) => category !== data.categories[i])
+    ? { ...data, categories }
+    : data;
+}
+
+/** The person's colour and icon of a type of the pack, if they chose one. */
+export function typeLookOf(
+  own: Pick<OwnLocations, 'typeLooks'>,
+  id: string,
+): OwnTypeLook | undefined {
+  return own.typeLooks?.find((look) => look.id === id);
+}
+
+/**
+ * Gives a type of the pack the person's colour and icon (`look`), or takes
+ * them out (`look` null): "Back to the pack's own". Only what differs from
+ * the pack's (`original`) is kept, so a newer pack that changes the other
+ * one shows it; a look the same as the pack's is taken out. The same data
+ * when nothing changes.
+ */
+export function setTypeLook(
+  own: OwnLocations,
+  id: string,
+  look: TypeLookFields | null,
+  original: TypeLookFields,
+): OwnLocations {
+  const before = typeLookOf(own, id);
+  const others = (own.typeLooks ?? []).filter((l) => l.id !== id);
+  const color = look?.color.toLowerCase();
+  const next: OwnTypeLook | null =
+    look === null
+      ? null
+      : {
+          id,
+          ...(color !== undefined && color !== original.color.toLowerCase() ? { color } : {}),
+          ...(look.icon !== original.icon ? { icon: look.icon } : {}),
+        };
+  if (next === null || (next.color === undefined && next.icon === undefined)) {
+    if (!before) return own;
+    const { typeLooks: _looks, ...rest } = own;
+    return others.length > 0 ? { ...rest, typeLooks: others } : rest;
+  }
+  if (before?.color === next.color && before?.icon === next.icon) return own;
+  return { ...own, typeLooks: [...others, next] };
 }
 
 /** The person's name of a map or level, if they gave one. */
@@ -522,6 +606,7 @@ export function mergeOwnFiles(here: OwnLocations, incoming: OwnLocations): OwnLo
   };
   const pictures = merge(here.pictures ?? [], incoming.pictures ?? []);
   const names = merge(here.names ?? [], incoming.names ?? []);
+  const typeLooks = merge(here.typeLooks ?? [], incoming.typeLooks ?? []);
   return keepOwnPicturesInUse({
     categoryGroups: merge(here.categoryGroups, incoming.categoryGroups),
     categories: merge(here.categories, incoming.categories),
@@ -529,5 +614,6 @@ export function mergeOwnFiles(here: OwnLocations, incoming: OwnLocations): OwnLo
     locations: merge(here.locations, incoming.locations),
     ...(pictures.length > 0 ? { pictures } : {}),
     ...(names.length > 0 ? { names } : {}),
+    ...(typeLooks.length > 0 ? { typeLooks } : {}),
   });
 }

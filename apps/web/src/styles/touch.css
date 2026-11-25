@@ -1620,6 +1620,30 @@
   color: var(--atlas-muted);
 }
 
+/* A kind's row with its palette button (colour and icon) at the end. */
+.touch-kind-line {
+  display: flex;
+  align-items: center;
+}
+
+.touch-kind-line > .touch-kind-row {
+  flex: 1;
+  min-width: 0;
+  padding-right: 8px;
+}
+
+.touch-kind-look {
+  width: 44px;
+  height: 44px;
+  margin-right: 6px;
+  color: var(--atlas-muted);
+}
+
+.touch-kind-look:hover,
+.touch-kind-look:focus-visible {
+  color: var(--atlas-text);
+}
+
 .touch-kind-name {
   flex: 1;
   min-width: 0;
@@ -2510,6 +2534,11 @@
 .touch[data-input='mouse'] .touch-panel .touch-kind-row {
   min-height: 40px;
   font-size: 14.5px;
+}
+
+.touch[data-input='mouse'] .touch-kind-line .touch-kind-look {
+  width: 36px;
+  height: 36px;
 }
 
 .touch[data-input='mouse'] .touch-group-switch {

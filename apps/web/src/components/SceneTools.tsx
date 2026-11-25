@@ -1,14 +1,19 @@
 import { useId, useState } from 'react';
+import { SHADE_PRESETS, shadeSwatch, texturedReason, type SceneLook } from '../scene/looks';
 import {
   cutOf,
   floorColoursReason,
   floorsOfMap,
+  lookOf,
   pickFloor,
   requestSceneView,
   sceneOf,
   setCut,
   setCutTowardCamera,
   setFloorColoursShown,
+  setLook,
+  setShade,
+  setStrongShade,
   setTitlesShown,
   setViewMode,
   useScene3d,
@@ -59,12 +64,13 @@ export function SceneSwitch() {
 
 /**
  * The 3D view's tools: the floors (each, or all of them), "View from
- * above", "Back to the start", the names of the areas on or off, each
- * floor in its own colour or not ("Floor colours", where the map has
- * floors: elsewhere the button stays, to be reached with a controller, and
- * says why it does nothing), and the cuts: away above a height, when no
- * floor is picked, and toward the camera. After going to a location, All
- * (or Back to the start) goes back.
+ * above", "Back to the start", the names of the areas on or off, "Look"
+ * (textured or shaded, and the colour; see `LookPanel`), each floor in its
+ * own colour or not ("Floor colours", where the map has floors: elsewhere
+ * the button stays, to be reached with a controller, and says why it does
+ * nothing), and the cuts: away above a height, when no floor is picked,
+ * and toward the camera. After going to a location, All (or Back to the
+ * start) goes back. One of Look and Cut is open at a time.
  */
 export function SceneTools() {
   const game = useAtlas((s) => s.game);
@@ -76,7 +82,13 @@ export function SceneTools() {
   const focus = useScene3d((s) => s.focus);
   const titles = useScene3d((s) => s.titles);
   const floorColours = useScene3d((s) => s.floorColours);
-  const [cutsOpen, setCutsOpen] = useState(false);
+  const lookShown = useScene3d(lookOf);
+  const ownLook = useScene3d((s) => s.ownLook);
+  const shade = useScene3d((s) => s.shade);
+  const strongShade = useScene3d((s) => s.strongShade);
+  const [open, setOpen] = useState<'look' | 'cuts' | null>(null);
+  const cutsOpen = open === 'cuts';
+  const lookOpen = open === 'look';
   // The reason "Floor colours" does nothing here, once pressed; null: not asked.
   const [noFloorsFor, setNoFloorsFor] = useState<string | null>(null);
   const sliderId = useId();
@@ -160,6 +172,19 @@ export function SceneTools() {
           <UiIcon name="titles" size={18} />
           <span>Area names</span>
         </button>
+        <button
+          type="button"
+          className="scene-tool"
+          aria-expanded={lookOpen}
+          data-testid="scene-look"
+          title="How the model is drawn: textured, or shaded in a colour"
+          onClick={() => {
+            setOpen(lookOpen ? null : 'look');
+          }}
+        >
+          <UiIcon name="look" size={18} />
+          <span>Look</span>
+        </button>
         <FloorColoursToggle
           on={floorColours}
           reason={noColours}
@@ -178,7 +203,7 @@ export function SceneTools() {
           aria-pressed={cutting}
           data-testid="scene-cuts"
           onClick={() => {
-            setCutsOpen(!cutsOpen);
+            setOpen(cutsOpen ? null : 'cuts');
           }}
         >
           <UiIcon name="cut" size={18} />
@@ -189,6 +214,21 @@ export function SceneTools() {
         <p className="scene-note" role="status" data-testid="scene-floor-colours-note">
           {noColours}: floor colours show only on a map with floors.
         </p>
+      ) : null}
+      {lookOpen ? (
+        <LookPanel
+          shown={lookShown}
+          ownLook={ownLook}
+          shade={shade}
+          strong={strongShade}
+          floorColours={floorColours && noColours === null}
+          onLook={(look) => {
+            // Already drawn so: the choice for other maps stays as it is.
+            if (look !== lookShown) setLook(look);
+          }}
+          onShade={setShade}
+          onStrong={setStrongShade}
+        />
       ) : null}
       {cutsOpen ? (
         <div className="scene-cuts" data-testid="scene-cuts-panel">
@@ -268,6 +308,127 @@ export function FloorColoursToggle(props: {
       <UiIcon name="floorColours" size={18} />
       <span>Floor colours</span>
     </button>
+  );
+}
+
+/**
+ * "Look": the model textured or shaded (see `scene/looks.ts`), the colour
+ * it is shaded in (a few colours, or one of the person's own) and "Darker
+ * walls and slopes". Where the model has no textures, Textured stays, to
+ * be reached with a controller, and pressing it says why it does nothing.
+ * Picking a colour shows the model shaded.
+ */
+export function LookPanel(props: {
+  /** The look the model is drawn with. */
+  shown: SceneLook;
+  /** Whether the model has textures or colours of its own; null: not known yet. */
+  ownLook: boolean | null;
+  shade: string;
+  strong: boolean;
+  /** "Floor colours" is on, painting over the look. */
+  floorColours: boolean;
+  onLook: (look: SceneLook) => void;
+  onShade: (shade: string) => void;
+  onStrong: (on: boolean) => void;
+}) {
+  const { shown, shade, strong } = props;
+  const reason = texturedReason(props.ownLook);
+  const [whyAsked, setWhyAsked] = useState(false);
+  const own = shade.startsWith('#');
+  return (
+    <div className="scene-cuts scene-look" data-testid="scene-look-panel">
+      <div className="scene-look-choice" role="group" aria-label="Look">
+        <button
+          type="button"
+          className="scene-look-option"
+          aria-pressed={reason === null && shown === 'textured'}
+          aria-disabled={reason !== null}
+          data-testid="scene-look-textured"
+          title={
+            reason !== null
+              ? `Textured: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`
+              : 'Show the model with its own textures and colours'
+          }
+          onClick={() => {
+            if (reason !== null) {
+              setWhyAsked(!whyAsked);
+              return;
+            }
+            props.onLook('textured');
+          }}
+        >
+          Textured
+        </button>
+        <button
+          type="button"
+          className="scene-look-option"
+          aria-pressed={shown === 'shaded'}
+          data-testid="scene-look-shaded"
+          title="Show the model in one colour, darker low and lighter high"
+          onClick={() => {
+            props.onLook('shaded');
+          }}
+        >
+          Shaded
+        </button>
+      </div>
+      {reason !== null && whyAsked ? (
+        <p className="scene-cut-note muted" role="status" data-testid="scene-look-note">
+          {reason}, so it is shown shaded.
+        </p>
+      ) : null}
+      <div className="scene-shades" role="group" aria-label="Colour of the shaded look">
+        {SHADE_PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            className="scene-shade"
+            aria-pressed={shade === preset.id}
+            aria-label={preset.name}
+            title={preset.name}
+            data-testid="scene-shade"
+            data-shade={preset.id}
+            style={{ background: shadeSwatch(preset.id) }}
+            onClick={() => {
+              props.onShade(preset.id);
+            }}
+          />
+        ))}
+        <label
+          className="scene-shade scene-shade-own"
+          data-pressed={own}
+          title="A colour of your own"
+          style={own ? { background: shade } : undefined}
+        >
+          <input
+            type="color"
+            aria-label="A colour of your own"
+            value={shadeSwatch(shade)}
+            data-testid="scene-shade-own"
+            onChange={(event) => {
+              props.onShade(event.target.value);
+            }}
+          />
+        </label>
+      </div>
+      <label className="scene-cut-toggle">
+        <input
+          type="checkbox"
+          checked={strong}
+          data-testid="scene-strong-shade"
+          onChange={(event) => {
+            props.onStrong(event.target.checked);
+          }}
+        />
+        Darker walls and slopes
+      </label>
+      {props.floorColours ? (
+        <p className="scene-cut-note muted" data-testid="scene-look-floors">
+          Floor colours is on, so each floor is shown in its own colour. Turn it off to see this
+          look.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

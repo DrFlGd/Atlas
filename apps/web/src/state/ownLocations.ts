@@ -22,10 +22,12 @@ import {
   removeOwnType,
   renameMapOrLevel,
   SearchIndex,
+  setTypeLook,
   takenRecordIds,
   type LoadedPack,
   type OwnLocationChanges,
   type OwnTypeFields,
+  type TypeLookFields,
 } from '@atlas/core';
 import {
   countOwnLocations,
@@ -659,6 +661,35 @@ export function deleteOwnArea(id: string): boolean {
 export function renameShownMapOrLevel(id: string, name: string | null, original: string): boolean {
   const next = renameMapOrLevel(get().own, id, name, original);
   return apply(next, name === null ? 'Original name used' : `Renamed “${name.trim()}”`);
+}
+
+/**
+ * Gives a type of the game shown the person's colour and icon, or takes
+ * them out (`look` null): "Back to the pack's own" (see `setTypeLook`).
+ * A type of the person's own is changed in place instead. Undo takes it
+ * back. Whether anything changed.
+ */
+export function changeTypeLook(id: string, look: TypeLookFields | null): boolean {
+  const ctx = context();
+  if (!ctx || !canChangeOwnLocations()) return false;
+  const ownType = ctx.own.categories.find((c) => c.id === id);
+  if (ownType) {
+    if (look === null) return false;
+    const color = look.color.toLowerCase();
+    if (ownType.color === color && ownType.icon === look.icon) return false;
+    return apply(
+      putOwnType(ctx.own, { ...ownType, color, icon: look.icon }),
+      `Type “${ownType.name}” changed`,
+    );
+  }
+  const original = ctx.data.categories.find((c) => c.id === id);
+  if (!original) return false;
+  return apply(
+    setTypeLook(ctx.own, id, look, original),
+    look === null
+      ? `“${original.name}” has the pack’s colour and icon again`
+      : `Colour and icon of “${original.name}” changed`,
+  );
 }
 
 /** Forgets the person's own records on a map that was deleted; that cannot be undone. */

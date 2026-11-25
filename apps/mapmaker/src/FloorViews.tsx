@@ -29,6 +29,11 @@ export function Floors3D(props: {
   /** A 3D model's preview: each triangle in its own colour, and its bounds as a box. */
   ownColours?: boolean;
   bounds?: boolean;
+  /** Remove pieces: a press chooses a surface (`onPickSurface`, the triangle pressed), and `marks` shows each
+   * triangle's part in it (see floors3d.ts). */
+  picking?: boolean;
+  marks?: Uint8Array | null;
+  onPickSurface?: (triangle: number | null) => void;
 }) {
   const { model, markers, bounds } = props;
   const box = useRef<HTMLDivElement>(null);
@@ -36,8 +41,10 @@ export function Floors3D(props: {
   const [problem, setProblem] = useState<string | null>(null);
   const [hover, setHover] = useState<FloorsSceneHover | null>(null);
   const pickRef = useRef(props.onPick);
+  const surfaceRef = useRef(props.onPickSurface);
   useEffect(() => {
     pickRef.current = props.onPick;
+    surfaceRef.current = props.onPickSurface;
   });
 
   useEffect(() => {
@@ -53,6 +60,7 @@ export function Floors3D(props: {
             markers,
             onHover: setHover,
             onPick: (index) => pickRef.current?.(index),
+            onPickSurface: (triangle) => surfaceRef.current?.(triangle),
             bounds: bounds ?? false,
           });
           setScene(made);
@@ -71,7 +79,7 @@ export function Floors3D(props: {
   }, [model, markers, bounds]);
 
   const { cuts, selected, hideAbove, showMarkers, outlines, looks } = props;
-  const { triangleFloors, clipHeight, places, focus, ownColours } = props;
+  const { triangleFloors, clipHeight, places, focus, ownColours, picking, marks } = props;
   const cutAt = focus?.cut ?? null;
   // Going to an item: the view flies down to it, once for each press.
   const flownTo = useRef(0);
@@ -93,8 +101,12 @@ export function Floors3D(props: {
       places: places ?? [],
       cutAt,
       ownColours: ownColours ?? false,
+      picking: picking ?? false,
+      marks: marks ?? null,
     });
   }, [
+    picking,
+    marks,
     cutAt,
     ownColours,
     scene,

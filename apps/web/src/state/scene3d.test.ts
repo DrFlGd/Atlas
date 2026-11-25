@@ -9,10 +9,16 @@ import {
   focusLocation,
   leaveFocus,
   loadSceneSettings,
+  lookOf,
   pickFloor,
   requestSceneView,
   setCut,
+  savedLook,
   setFloorColoursShown,
+  setLook,
+  setOwnLook,
+  setShade,
+  setStrongShade,
   sceneOf,
   setViewMode,
   useScene3d,
@@ -180,5 +186,83 @@ describe('Floor colours', () => {
     const state = useAtlas.getState();
     expect(floorColoursReason(floorsOfMap(state, 'demo:map:world'))).toBeNull();
     expect(floorColoursReason([])).toBe('This map has no floors');
+  });
+});
+
+describe('Look', () => {
+  beforeEach(() => {
+    useScene3d.setState({ look: 'textured', shade: 'teal', strongShade: false, ownLook: null });
+  });
+
+  it('is textured where the model has its own textures, else shaded in teal, at first', () => {
+    expect(useScene3d.getState()).toMatchObject({
+      look: 'textured',
+      shade: 'teal',
+      strongShade: false,
+    });
+    // Nothing of the model in yet, then a model made from collision, then a textured one.
+    expect(lookOf(useScene3d.getState())).toBe('shaded');
+    setOwnLook(false);
+    expect(lookOf(useScene3d.getState())).toBe('shaded');
+    setOwnLook(true);
+    expect(lookOf(useScene3d.getState())).toBe('textured');
+    setLook('shaded');
+    expect(lookOf(useScene3d.getState())).toBe('shaded');
+  });
+
+  it('shows a textured model shaded when a colour is picked, and keeps the choice of a model without textures', () => {
+    setOwnLook(true);
+    setShade('sand');
+    expect(useScene3d.getState()).toMatchObject({ look: 'shaded', shade: 'sand' });
+    // On a model without textures, shaded already: textured stays asked for, for the next textured map.
+    useScene3d.setState({ look: 'textured' });
+    setOwnLook(false);
+    setShade('#336699');
+    setStrongShade(true);
+    expect(useScene3d.getState()).toMatchObject({
+      look: 'textured',
+      shade: '#336699',
+      strongShade: true,
+    });
+    setOwnLook(true);
+    setStrongShade(false);
+    expect(useScene3d.getState()).toMatchObject({ look: 'shaded', strongShade: false });
+  });
+
+  it('takes only colours it can shade with', () => {
+    setShade('not a colour');
+    setShade('#12345');
+    expect(useScene3d.getState().shade).toBe('teal');
+  });
+
+  it('is kept on the device: the look, the colour and darker walls', async () => {
+    setOwnLook(true);
+    setShade('slate');
+    setStrongShade(true);
+    await expect
+      .poll(() => progressStore().getSetting(SETTINGS.sceneLook))
+      .toEqual({ look: 'shaded', shade: 'slate', strong: true });
+    useScene3d.setState({ look: 'textured', shade: 'teal', strongShade: false });
+    await loadSceneSettings();
+    expect(useScene3d.getState()).toMatchObject({
+      look: 'shaded',
+      shade: 'slate',
+      strongShade: true,
+    });
+    setLook('textured');
+    await expect
+      .poll(() => progressStore().getSetting(SETTINGS.sceneLook))
+      .toEqual({ look: 'textured', shade: 'slate', strong: true });
+  });
+
+  it('reads back only what it can of a kept look', () => {
+    expect(savedLook(null)).toEqual({});
+    expect(savedLook('shaded')).toEqual({});
+    expect(savedLook({ look: 'wireframe', shade: 'plum', strong: 1 })).toEqual({});
+    expect(savedLook({ look: 'shaded', shade: '#a0b0c0', strong: false })).toEqual({
+      look: 'shaded',
+      shade: '#a0b0c0',
+      strongShade: false,
+    });
   });
 });

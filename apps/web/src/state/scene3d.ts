@@ -20,9 +20,18 @@
  * choice kept on the device. "Floor colours" paints each floor of the model
  * in its own colour (see `scene/floorColours.ts`), where the map has floors;
  * also a choice kept on the device, off at first.
+ *
+ * "Look" draws the model textured (its own textures and colours) or
+ * shaded, in one colour the person picks (see `scene/looks.ts`). The look,
+ * the colour and "Darker walls and slopes" are kept on the device, for
+ * every 3D map; a model without textures of its own is shown shaded
+ * whatever was chosen, so at first a textured model is shown textured and
+ * one made from collision in teal, as it was made. "Floor colours", while
+ * on, paints over either look.
  */
 import { floorsOf, type Layer, type Scene } from '@atlas/schema';
 import { create } from 'zustand';
+import { DEFAULT_SHADE, isShade, lookShown, type SceneLook } from '../scene/looks';
 import { saveSetting, showMap } from './actions';
 import { useMapOverlay } from './mapOverlay';
 import { useRoutes } from './routes';
@@ -64,6 +73,17 @@ export interface Scene3dState {
   titles: boolean;
   /** Each floor of the model in its own colour, where the map has floors. */
   floorColours: boolean;
+  /** The look asked for: textured, where the model can be (see `lookOf`), or shaded. */
+  look: SceneLook;
+  /** The colour shaded with: a preset's id or `#rrggbb` (see `scene/looks.ts`). */
+  shade: string;
+  /** "Darker walls and slopes" in the shaded look. */
+  strongShade: boolean;
+  /**
+   * Whether the model shown has textures or colours of its own, as the
+   * view found once its first part was in; null: not known yet.
+   */
+  ownLook: boolean | null;
 }
 
 export interface SceneFocus {
@@ -82,6 +102,10 @@ export const useScene3d = create<Scene3dState>()(() => ({
   focus: null,
   titles: true,
   floorColours: false,
+  look: 'textured',
+  shade: DEFAULT_SHADE,
+  strongShade: false,
+  ownLook: null,
 }));
 
 /** Reads the person's choice of 2D or 3D, once the store with the settings is open. */
@@ -93,6 +117,7 @@ export async function loadSceneSettings(): Promise<void> {
     if (titles === true || titles === false) useScene3d.setState({ titles });
     const floorColours = await progressStore().getSetting(SETTINGS.sceneFloorColours);
     if (floorColours === true || floorColours === false) useScene3d.setState({ floorColours });
+    useScene3d.setState(savedLook(await progressStore().getSetting(SETTINGS.sceneLook)));
   } catch {
     // The default stands.
   }
@@ -108,6 +133,67 @@ export function setTitlesShown(on: boolean): void {
 export function setFloorColoursShown(on: boolean): void {
   useScene3d.setState({ floorColours: on });
   saveSetting(SETTINGS.sceneFloorColours, on);
+}
+
+/** The look, the colour and "Darker walls and slopes" as kept on the device. */
+export interface SavedLook {
+  look: SceneLook;
+  shade: string;
+  strong: boolean;
+}
+
+/** What of a kept look can be read (anything else stays as it is). */
+export function savedLook(saved: unknown): Partial<Scene3dState> {
+  if (typeof saved !== 'object' || saved === null) return {};
+  const { look, shade, strong } = saved as Partial<Record<keyof SavedLook, unknown>>;
+  return {
+    ...(look === 'textured' || look === 'shaded' ? { look } : {}),
+    ...(isShade(shade) ? { shade } : {}),
+    ...(strong === true || strong === false ? { strongShade: strong } : {}),
+  };
+}
+
+function keepLook(): void {
+  const { look, shade, strongShade } = useScene3d.getState();
+  const saved: SavedLook = { look, shade, strong: strongShade };
+  saveSetting(SETTINGS.sceneLook, saved);
+}
+
+/** The look the model shown is drawn with: textured only where it has textures or colours of its own. */
+export function lookOf(state: Pick<Scene3dState, 'look' | 'ownLook'>): SceneLook {
+  return lookShown(state.look, state.ownLook === true);
+}
+
+/** Draws 3D maps textured (where they can be) or shaded, and keeps the choice. */
+export function setLook(look: SceneLook): void {
+  useScene3d.setState({ look });
+  keepLook();
+}
+
+/**
+ * Shades with a colour (a preset's id or `#rrggbb`), and keeps it. A model
+ * shown textured is shown shaded, to show the colour picked.
+ */
+export function setShade(shade: string): void {
+  if (!isShade(shade)) return;
+  const state = useScene3d.getState();
+  useScene3d.setState({ shade, ...(lookOf(state) === 'textured' ? { look: 'shaded' } : {}) });
+  keepLook();
+}
+
+/** "Darker walls and slopes" in the shaded look, on or off; as `setShade`, it shows the model shaded. */
+export function setStrongShade(on: boolean): void {
+  const state = useScene3d.getState();
+  useScene3d.setState({
+    strongShade: on,
+    ...(lookOf(state) === 'textured' ? { look: 'shaded' } : {}),
+  });
+  keepLook();
+}
+
+/** The view found whether the model shown has textures or colours of its own (null: none shown). */
+export function setOwnLook(own: boolean | null): void {
+  if (useScene3d.getState().ownLook !== own) useScene3d.setState({ ownLook: own });
 }
 
 /** Why "Floor colours" cannot be used on a map: null when it can. */

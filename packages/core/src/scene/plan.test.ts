@@ -172,6 +172,25 @@ describe('which cells to load', () => {
     // However far the camera, the only cell is shown: the view is never empty.
     expect(planCells(whole, [500, 0, 5], huge)[0]!.level).toBe(0);
   });
+
+  it('takes overlapping cells of different sizes each by its own distance', () => {
+    // As the scene builder makes them with each texture kept once: a cell over a whole town of 160 (the
+    // pictures every house shows), and small cells over it (a house's own pictures).
+    const town: PlanCell[] = [
+      { id: 't4-0-0', box: [0, 0, 160, 160], heights: [0, 10], levels },
+      { id: 'c0-0', box: [0, 0, 10, 10], heights: [0, 10], levels },
+      { id: 'c15-0', box: [150, 0, 160, 10], heights: [0, 10], levels },
+    ];
+    const plan = planCells(town, [5, 2, 5], huge);
+    const level = (id: string) => plan.find((p) => p.id === id)?.level;
+    // The camera is inside the large cell and the near small one: both at their finest.
+    expect(level('t4-0-0')).toBe(0);
+    expect(level('c0-0')).toBe(0);
+    // The small cell across the town is many of its own sides away: past the reach, not loaded.
+    expect(level('c15-0')).toBeUndefined();
+    // From farther off, the large cell is coarser too, by its own sides.
+    expect(planCells(town, [1000, 2, 80], huge).find((p) => p.id === 't4-0-0')?.level).toBe(2);
+  });
 });
 
 describe('stepping the detail by frame rate', () => {

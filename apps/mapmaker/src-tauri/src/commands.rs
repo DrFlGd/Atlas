@@ -514,8 +514,9 @@ pub async fn floor_views_open(
 }
 
 /// The Adjust floors views for these cuts and names, or with `method` `passages`, for automatic passages with
-/// these Upper / Lower choices.
+/// these Upper / Lower choices; without the pieces `removed` (as the floor cuts file writes them).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn floor_views_request(
     views: State<'_, FloorViews>,
     area: String,
@@ -524,6 +525,7 @@ pub async fn floor_views_request(
     outlines: Option<bool>,
     method: Option<String>,
     passages: Option<Value>,
+    removed: Option<Value>,
 ) -> Result<Value, String> {
     let key = overrides::area_key(&area).ok_or_else(|| format!("{area} is not an area."))?;
     let cuts: Vec<f64> = cuts
@@ -544,8 +546,12 @@ pub async fn floor_views_request(
         overrides::clean_entry(&serde_json::json!({ "passages": passages.unwrap_or(Value::Null) }))
             .and_then(|entry| entry.get("passages").cloned())
             .unwrap_or_else(|| Value::Array(Vec::new()));
+    let removed =
+        overrides::clean_entry(&serde_json::json!({ "removed": removed.unwrap_or(Value::Null) }))
+            .and_then(|entry| entry.get("removed").cloned())
+            .unwrap_or_else(|| Value::Array(Vec::new()));
     tauri::async_runtime::spawn_blocking(move || {
-        views.request(&key, &cuts, &names, outlines, &method, &passages)
+        views.request(&key, &cuts, &names, outlines, &method, &passages, &removed)
     })
     .await
     .map_err(|error| error.to_string())?

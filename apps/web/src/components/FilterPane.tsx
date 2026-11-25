@@ -13,10 +13,12 @@ import {
 import { numberFormat, useSummary, useVisibleCategories } from '../state/derived';
 import { useAtlas } from '../state/store';
 import { GlyphBadge, UiIcon } from './icons';
+import { TypeLookButton } from './TypeLook';
 
 /**
  * Left pane: presets, the "hide found" toggle, the category tree and region
- * progress. A region row the map can go to is a button that does so.
+ * progress. A region row the map can go to is a button that does so. The
+ * palette button beside a type changes its colour and icon (`TypeLook.tsx`).
  */
 export function FilterPane() {
   const game = useAtlas((s) => s.game);
@@ -318,7 +320,7 @@ function GroupRow({ group, categories, visible, tally, categoryTally }: GroupRow
       </div>
       <ul id={listId} className="tree-children" hidden={!open}>
         {categories.map((category) => (
-          <li key={category.id}>
+          <li key={category.id} className="tree-type">
             <label className="tree-row tree-label" data-testid={`category-${category.id}`}>
               <input
                 type="checkbox"
@@ -336,6 +338,7 @@ function GroupRow({ group, categories, visible, tally, categoryTally }: GroupRow
               <span className="tree-name">{category.name}</span>
               <CountBadge tally={categoryTally(category.id)} />
             </label>
+            <TypeLookButton typeId={category.id} name={category.name} />
           </li>
         ))}
       </ul>

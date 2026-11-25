@@ -168,6 +168,21 @@ describe('make reports', () => {
       textures: { kept: 4, leftOut: 0 },
     };
     expect(sceneLines(fromModels)[0]).toBe('From the game’s models, 4 textures at their own size');
+    // With the textures counted: read, not readable and not found, and the model's size.
+    const counted = {
+      ...fromModels,
+      bytes: 180 * 1024 * 1024,
+      textures: { kept: 130, wanted: 124, read: 120, failed: 3, missing: 1, eachOnce: true },
+    };
+    expect(sceneLines(counted)).toEqual([
+      'From the game’s models, 120 of 124 textures read at their own size (3 could not be read, 1 not found)',
+      '82 triangles read, 80 in the model',
+      '1 cell, 3 files, 180 MB',
+      '0.40 s',
+    ]);
+    expect(
+      sceneLines({ ...counted, textures: { wanted: 2, read: 2, failed: 0, missing: 0 } })[0],
+    ).toBe('From the game’s models, 2 of 2 textures read at their own size');
     const fromCollision = {
       ...fromModels,
       look: 'collision' as const,

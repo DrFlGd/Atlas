@@ -34,7 +34,12 @@ import { useAtlas } from './store';
  * maps are saved as one game, as any import is.
  *
  * The folder's files are read where they are, through the shell, and
- * nothing is fetched or sent anywhere.
+ * nothing is sent anywhere. A kind of game that says `download` may
+ * instead have its files downloaded: offered only once the person ticks
+ * that they own the game, it opens the app's own folder kept for that
+ * kind, and the importer downloads into it, through the shell, only the
+ * files the ticked maps need, one at a time; what is kept there is read
+ * the next time, not downloaded again.
  */
 
 /** A kind of game an importer of this app reads the files of. */
@@ -47,7 +52,14 @@ export interface GameFilesChoice {
 export type GameFilesStep =
   | { kind: 'off' }
   | { kind: 'choose'; choices: GameFilesChoice[] }
-  | { kind: 'folder'; choice: GameFilesChoice; reading: boolean; error?: string }
+  | {
+      kind: 'folder';
+      choice: GameFilesChoice;
+      reading: boolean;
+      error?: string;
+      /** Ticked: the person owns the game, so its files may be downloaded. */
+      owned?: boolean;
+    }
   | {
       kind: 'maps';
       choice: GameFilesChoice;
@@ -116,9 +128,15 @@ async function importerOf(id: string): Promise<AtlasImporter | null> {
   return (await loadImporters().catch((): AtlasImporter[] => [])).find((i) => i.id === id) ?? null;
 }
 
-/** The folder the person picked, as an importer reads it ({@link GameFolder}). */
+/**
+ * The folder the person picked, as an importer reads it ({@link GameFolder});
+ * the app's own folder for downloads can also download into itself.
+ */
 export function gameFolderOf(
-  shell: Pick<NonNullable<typeof desktop>['tiles'], 'listGameFolder' | 'readGameFile'>,
+  shell: Pick<
+    NonNullable<typeof desktop>['tiles'],
+    'listGameFolder' | 'readGameFile' | 'downloadGameFile'
+  >,
   folder: ShellGameFolder,
 ): GameFolder {
   return {
@@ -131,6 +149,11 @@ export function gameFolderOf(
         Math.max(0, Math.floor(start ?? 0)),
         Math.min(GAME_FILE_MAX_READ, Math.max(0, Math.floor(length ?? GAME_FILE_MAX_READ))),
       ),
+    ...(folder.downloads
+      ? {
+          download: (url: string, path: string) => shell.downloadGameFile(folder.token, url, path),
+        }
+      : {}),
   };
 }
 
@@ -150,7 +173,44 @@ export async function pickGameFolder(): Promise<void> {
     return;
   }
   if (!folder) return;
-  set({ kind: 'folder', choice, reading: true });
+  await surveyFolder(shell, choice, folder, step.owned ?? false);
+}
+
+/** Ticks or unticks that the person owns the game, so its files may be downloaded. */
+export function setOwnGame(owned: boolean): void {
+  const { step } = useGameFiles.getState();
+  if (step.kind === 'folder') set({ ...step, owned });
+}
+
+/**
+ * Downloads the game's files instead of reading a folder: once the person
+ * has ticked that they own the game, opens the app's own folder for this
+ * kind of game, and has the importer list the maps. Files are downloaded
+ * only when maps are made, and only those the ticked maps need.
+ */
+export async function downloadGameFiles(): Promise<void> {
+  const shell = desktop;
+  const { step } = useGameFiles.getState();
+  if (!shell || step.kind !== 'folder' || !step.owned || !step.choice.kind.download) return;
+  const { choice } = step;
+  let folder: ShellGameFolder;
+  try {
+    folder = await shell.tiles.openGameFiles(choice.importerId, choice.kind.id);
+  } catch (error) {
+    set({ ...step, reading: false, error: errorText(error) });
+    return;
+  }
+  await surveyFolder(shell, choice, { ...folder, downloads: true }, true);
+}
+
+/** Has the importer read what is in the folder, and lists its maps. */
+async function surveyFolder(
+  shell: NonNullable<typeof desktop>,
+  choice: GameFilesChoice,
+  folder: ShellGameFolder,
+  owned: boolean,
+): Promise<void> {
+  set({ kind: 'folder', choice, reading: true, owned });
   const importer = await importerOf(choice.importerId);
   let survey: ReturnType<typeof checkGameFilesSurvey>;
   try {
@@ -165,7 +225,7 @@ export async function pickGameFolder(): Promise<void> {
   if (useGameFiles.getState().step.kind !== 'folder') return;
   if (!survey.ok) {
     void shell.tiles.closeGameFolder(folder.token).catch(() => undefined);
-    set({ kind: 'folder', choice, reading: false, error: survey.message });
+    set({ kind: 'folder', choice, reading: false, owned, error: survey.message });
     return;
   }
   if (survey.maps.length === 0) {
@@ -174,6 +234,7 @@ export async function pickGameFolder(): Promise<void> {
       kind: 'folder',
       choice,
       reading: false,
+      owned,
       error: `${survey.game.title} was found in ${folder.name}, but none of its maps can be made.`,
     });
     return;

@@ -171,7 +171,8 @@ impl FloorViews {
     }
 
     /// The views for `cuts` (heights in metres) and `names` (lowest first), the floors from above with `outlines`
-    /// or without. Blocks until they are drawn.
+    /// or without, without the `removed` pieces. Blocks until they are drawn.
+    #[allow(clippy::too_many_arguments)]
     pub fn request(
         &self,
         area: &str,
@@ -180,6 +181,7 @@ impl FloorViews {
         outlines: bool,
         method: &str,
         passages: &Value,
+        removed: &Value,
     ) -> Result<Value, String> {
         let mut inner = lock(&self.inner);
         let viewer = inner
@@ -189,7 +191,7 @@ impl FloorViews {
         viewer.next_id += 1;
         let id = viewer.next_id;
         let line =
-            json!({ "id": id, "cuts": cuts, "names": names, "outlines": outlines, "method": method, "passages": passages })
+            json!({ "id": id, "cuts": cuts, "names": names, "outlines": outlines, "method": method, "passages": passages, "removed": removed })
                 .to_string();
         let sent = viewer
             .stdin
@@ -295,6 +297,7 @@ done
                 true,
                 "passages",
                 &json!([{"x": 1.5, "z": 2.0, "show": "lower"}]),
+                &json!([{"part": "h000100", "box": [0, 0, 0, 1, 1, 1]}]),
             )
             .unwrap();
         assert_eq!(answer["seen"]["cuts"], json!([4.5, 12.0]));
@@ -302,19 +305,20 @@ done
         assert_eq!(answer["seen"]["outlines"], json!(true));
         assert_eq!(answer["seen"]["method"], json!("passages"));
         assert_eq!(answer["seen"]["passages"][0]["show"], json!("lower"));
+        assert_eq!(answer["seen"]["removed"][0]["part"], json!("h000100"));
         let none = json!([]);
         assert_eq!(
             views
-                .request("m15_01", &[], &[], false, "cuts", &none)
+                .request("m15_01", &[], &[], false, "cuts", &none, &none)
                 .unwrap()["id"],
             2
         );
         assert!(views
-            .request("m10_01", &[], &[], false, "cuts", &none)
+            .request("m10_01", &[], &[], false, "cuts", &none, &none)
             .is_err());
         views.close();
         assert!(views
-            .request("m15_01", &[], &[], false, "cuts", &none)
+            .request("m15_01", &[], &[], false, "cuts", &none, &none)
             .is_err());
         let _ = fs::remove_dir_all(&base);
     }

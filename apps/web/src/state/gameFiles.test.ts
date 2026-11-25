@@ -94,13 +94,36 @@ describe('making 3D maps from game files', () => {
   it('reads the folder picked through the shell, whole files within the limit', async () => {
     const readGameFile = vi.fn(() => Promise.resolve(new Uint8Array(4)));
     const listGameFolder = vi.fn(() => Promise.resolve([{ name: 'maps', folder: true, size: 0 }]));
-    const folder = gameFolderOf({ readGameFile, listGameFolder }, { token: 't1', name: 'Made Up' });
+    const downloadGameFile = vi.fn(() => Promise.resolve(new Uint8Array(2)));
+    const folder = gameFolderOf(
+      { readGameFile, listGameFolder, downloadGameFile },
+      { token: 't1', name: 'Made Up' },
+    );
     expect(folder.name).toBe('Made Up');
+    // A folder picked never downloads.
+    expect('download' in folder).toBe(false);
     await folder.list('');
     expect(listGameFolder).toHaveBeenCalledWith('t1', '');
     await folder.read('maps/a.bsp');
     expect(readGameFile).toHaveBeenLastCalledWith('t1', 'maps/a.bsp', 0, 512 * 1024 * 1024);
     await folder.read('maps/a.bsp', 16.7, 8);
     expect(readGameFile).toHaveBeenLastCalledWith('t1', 'maps/a.bsp', 16, 8);
+  });
+
+  it('downloads only into the app’s own folder for a game’s files, through the shell', async () => {
+    const readGameFile = vi.fn(() => Promise.resolve(new Uint8Array(4)));
+    const listGameFolder = vi.fn(() => Promise.resolve([]));
+    const downloadGameFile = vi.fn(() => Promise.resolve(new Uint8Array([1, 2])));
+    const folder = gameFolderOf(
+      { readGameFile, listGameFolder, downloadGameFile },
+      { token: 'k1', name: 'made-up-game', downloads: true },
+    );
+    const bytes = await folder.download!('https://example.org/Game/01.bin?v=1', 'Game/01.bin');
+    expect([...bytes]).toEqual([1, 2]);
+    expect(downloadGameFile).toHaveBeenCalledWith(
+      'k1',
+      'https://example.org/Game/01.bin?v=1',
+      'Game/01.bin',
+    );
   });
 });

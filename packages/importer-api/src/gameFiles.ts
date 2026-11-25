@@ -17,9 +17,13 @@
  * see {@link SceneModelRequest}). The result is one game whose maps are
  * the ticked levels, saved as any import is.
  *
- * Nothing is fetched from anywhere for it, and nothing the importer reads
- * leaves the computer: the folder's files are read where they are, and
- * the models built are kept in the maps folder only.
+ * Nothing the importer reads leaves the computer: the folder's files are
+ * read where they are, and the models built are kept in the maps folder
+ * only. A kind may also offer to download its game's files instead
+ * ({@link GameFilesKind.download}): only after the person confirms they
+ * own the game, only the files the maps they tick need, one at a time,
+ * with the app's own downloader, kept in a folder of the app's so they
+ * are not downloaded again ({@link GameFolder.download}).
  */
 
 import type {
@@ -38,6 +42,18 @@ export interface GameFilesKind {
   title: string;
   /** One or two sentences: which games, and which folder to choose. */
   description: string;
+  /**
+   * Optional: the importer can download the files this kind's game needs
+   * in place of a folder the person chooses. The app offers it beside the
+   * folder, and only once the person has confirmed they own the game; it
+   * then hands the importer a folder of its own, kept for this importer
+   * and kind, that can download ({@link GameFolder.download}). Absent: the
+   * folder only. An app that does not know it offers the folder only.
+   */
+  download?: {
+    /** One or two sentences: what is downloaded, and from where. */
+    description: string;
+  };
 }
 
 /** One entry of a folder of the game ({@link GameFolder.list}). */
@@ -68,10 +84,25 @@ export interface GameFolder {
    * {@link GAME_FILE_MAX_READ} bytes a call.
    */
   read(path: string, start?: number, length?: number): Promise<Uint8Array>;
+  /**
+   * Only in the folder the app keeps for a kind's downloads
+   * ({@link GameFilesKind.download}), once the person has confirmed they
+   * own the game: fetches the file at `url` (`https`) with the app's own
+   * downloader (one request, the app's name and version as its user
+   * agent, no cookies, nothing tried again or around a refusal), keeps
+   * it at `path` in this folder, and hands its bytes back. Rejects with a
+   * plain sentence for any answer but a file: the importer stops there.
+   * One at a time: a call waits for the one before it. At most
+   * {@link GAME_FILE_MAX_DOWNLOAD} bytes.
+   */
+  download?(url: string, path: string): Promise<Uint8Array>;
 }
 
 /** The most bytes one {@link GameFolder.read} hands back. The desktop shell enforces the same. */
 export const GAME_FILE_MAX_READ = 512 * 1024 * 1024;
+
+/** The most bytes one {@link GameFolder.download} fetches. The desktop shell enforces the same. */
+export const GAME_FILE_MAX_DOWNLOAD = 256 * 1024 * 1024;
 
 /** A map of the game the importer can make ({@link GameFilesSurvey.maps}). */
 export interface GameFilesMap {

@@ -273,20 +273,33 @@ test('the names of the areas float over the view, frame their area when pressed,
 
   // Pressed with the keyboard, a title shows its area: its name near the middle of the view.
   const caves = titles.filter({ hasText: 'Glimmer Caves' });
+  // Focusing the title can let the view report itself at rest before Enter starts the flight, so
+  // the old mark is cleared after focusing, and the title is read until the flight has brought it
+  // to the middle (a mark set just before the flight would otherwise be read mid-flight).
+  await caves.focus();
   await status.evaluate((element) => {
     delete (element as HTMLElement).dataset.onScreen;
   });
-  await caves.focus();
   await page.keyboard.press('Enter');
   await expect(status).toHaveAttribute('data-on-screen', /\[/, { timeout: 20_000 });
   const view = (await page.getByTestId('scene-view').boundingBox())!;
-  const title = (await caves.boundingBox())!;
-  expect(Math.abs(title.x + title.width / 2 - (view.x + view.width / 2))).toBeLessThan(
-    view.width * 0.15,
-  );
-  expect(Math.abs(title.y + title.height - (view.y + view.height / 2))).toBeLessThan(
-    view.height * 0.15,
-  );
+  let seen = '';
+  await expect
+    .poll(
+      async () => {
+        const title = (await caves.boundingBox())!;
+        seen = JSON.stringify({ view, title, at: await status.getAttribute('data-on-screen') });
+        return Math.max(
+          Math.abs(title.x + title.width / 2 - (view.x + view.width / 2)) / view.width,
+          Math.abs(title.y + title.height - (view.y + view.height / 2)) / view.height,
+        );
+      },
+      { timeout: 10_000, message: 'the title in the middle of the view' },
+    )
+    .toBeLessThan(0.15)
+    .catch((error: unknown) => {
+      throw new Error(`${String(error)}\nLast seen: ${seen.slice(0, 600)}`);
+    });
 
   // Hidden from the view's tools, and kept so on the device.
   const toggle = page.getByTestId('scene-titles-toggle');
@@ -335,6 +348,45 @@ test('Floor colours paints each floor of the model in its own colour, and the ch
   expect(errors).toEqual([]);
 });
 
+test('Look draws the model textured or shaded in a colour picked, and the choice is kept', async ({
+  page,
+}) => {
+  const errors = collectErrors(page);
+  await openKeep(page);
+  const status = page.getByTestId('scene-status');
+  const view = page.getByTestId('scene-view');
+  // The keep has colours of its own: textured at first.
+  await expect(status).toHaveAttribute('data-own-look', 'true');
+  await expect(status).toHaveAttribute('data-look', 'textured');
+  await page.getByTestId('scene-look').click();
+  const panel = page.getByTestId('scene-look-panel');
+  await expect(panel.getByTestId('scene-look-textured')).toHaveAttribute('aria-pressed', 'true');
+  const textured = await view.screenshot();
+  await panel.getByTestId('scene-look-shaded').click();
+  await expect(status).toHaveAttribute('data-look', 'shaded');
+  await page.waitForTimeout(300);
+  const teal = await view.screenshot();
+  expect(teal.equals(textured)).toBe(false);
+  // Another colour, and darker walls: shaded still, drawn otherwise.
+  await panel.locator('[data-shade="sand"]').click();
+  await panel.getByTestId('scene-strong-shade').check();
+  await expect(panel.locator('[data-shade="sand"]')).toHaveAttribute('aria-pressed', 'true');
+  await page.waitForTimeout(300);
+  expect((await view.screenshot()).equals(teal)).toBe(false);
+  await expect
+    .poll(() => storedSetting(page, 'sceneLook'))
+    .toEqual({ look: 'shaded', shade: 'sand', strong: true });
+  // Kept on the device.
+  await page.reload();
+  await expect(status).toHaveAttribute('data-ready', 'true', { timeout: 60_000 });
+  await expect(status).toHaveAttribute('data-look', 'shaded');
+  await page.getByTestId('scene-look').click();
+  await expect(panel.locator('[data-shade="sand"]')).toHaveAttribute('aria-pressed', 'true');
+  await panel.getByTestId('scene-look-textured').click();
+  await expect(status).toHaveAttribute('data-look', 'textured');
+  expect(errors).toEqual([]);
+});
+
 test('with a controller: the D-pad holds a location, A goes to it, B goes back', async ({
   page,
 }) => {
@@ -353,25 +405,49 @@ test('with a controller: the D-pad holds a location, A goes to it, B goes back',
     (window as unknown as { testPad: typeof pad }).testPad = pad;
     Object.defineProperty(navigator, 'getGamepads', { configurable: true, value: () => [pad] });
   });
+  // The app reads the pad once a frame, and frames can be slow where WebGL runs on the CPU, so
+  // each state is held for two frames of the page rather than a fixed time.
   const press = async (button: number) => {
     for (const value of [1, 0]) {
       await page.evaluate(
-        ([index, amount]) => {
-          const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
-          pad.buttons[index!] = { pressed: amount === 1, value: amount };
-        },
+        ([index, amount]) =>
+          new Promise<void>((resolve) => {
+            const pad = (window as unknown as { testPad: { buttons: unknown[] } }).testPad;
+            pad.buttons[index!] = { pressed: amount === 1, value: amount };
+            requestAnimationFrame(() => {
+              requestAnimationFrame(() => {
+                resolve();
+              });
+            });
+          }),
         [button, value],
       );
-      await page.waitForTimeout(150);
     }
   };
   await openKeep(page);
   const status = page.getByTestId('scene-status');
   const target = page.getByTestId('pad-reticle-target');
-  // The D-pad (right) holds the next location that way.
+  // The D-pad (right) holds the next location that way, once the view has come to rest on it
+  // (A opens what is under the crosshair when it is pressed, so not while the view still moves).
+  await status.evaluate((element) => {
+    delete (element as HTMLElement).dataset.onScreen;
+  });
   await press(15);
+  await expect(status).toHaveAttribute('data-on-screen', /\[/, { timeout: 20_000 });
   await expect(target).toHaveCount(1, { timeout: 10_000 });
-  const held = (await target.getAttribute('data-location'))!;
+  // The same location held twice, a little apart: the view no longer moves under the crosshair.
+  let held = '';
+  await expect
+    .poll(
+      async () => {
+        const first = await target.getAttribute('data-location');
+        await page.waitForTimeout(400);
+        held = (await target.getAttribute('data-location')) ?? '';
+        return first !== null && first === held;
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
   // A opens it, and the view goes to it.
   await press(0);
   await expect(status).toHaveAttribute('data-selected', held);
