@@ -185,6 +185,12 @@ jobs:
 
           To start Atlas from your Steam library, open **Settings** in Atlas and press **Add Atlas to Steam** under **Atlas in Steam**. Atlas adds itself as a non-Steam game, with its own artwork, on Windows and on the Steam Deck. **Atlas-Steam-artwork.zip** has the same pictures, with a note on which goes where, if you would rather set them by hand.
 
+          ## New in 0.36.1
+
+          - **Making a 3D map from game files finishes** (Atlas Importer 0.36.1): every level stopped at the end with “The model was not sent as bytes.” The app's own security settings refused the route its screens use to send the finished model to the app, so it took a slower route that cannot carry it. The usual route is allowed again, and the slower one can now carry a model too.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.36.0
 
           - **Your own colour and icon for any type.** Some types were hard to see because their colour was close to the map's. Press the palette button beside a type in the filters, choose one of the colours or any colour you like and an icon, then press **Save**. The map, the 3D view, the filters, search, cards and lists all show the type that way. Your choice is kept on this device with your own data for the game, so a newer version of the pack keeps it, and the pack itself is never changed. **Back to the pack's own** brings the original colour and icon back.

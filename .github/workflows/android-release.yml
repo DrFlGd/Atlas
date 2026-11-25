@@ -192,6 +192,12 @@ jobs:
           - Exporting and importing progress files from the profile under **Progress**. Found marks are saved on the phone.
           - The app stays clear of the status bar and the navigation buttons.
 
+          ## New in 0.36.1
+
+          - A fix to how the app's screens talk to the app itself: its own security settings refused the usual route, so it took a slower one. The usual route is allowed again.
+
+          This version has passed the automatic checks only.
+
           ## New in 0.36.0
 
           - **Your own colour and icon for any type.** Some types were hard to see because their colour was close to the map's. Press the palette button beside a type in the filters, choose one of the colours or any colour you like and an icon, then press **Save**. The map, the 3D view, the filters, search, cards and lists all show the type that way. Your choice is kept on this device with your own data for the game, so a newer version of the pack keeps it, and the pack itself is never changed. **Back to the pack's own** brings the original colour and icon back.
