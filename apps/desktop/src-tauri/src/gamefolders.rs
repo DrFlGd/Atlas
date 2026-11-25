@@ -560,19 +560,31 @@ pub mod commands {
         request: tauri::ipc::Request<'_>,
     ) -> Result<String, String> {
         main_only(&window)?;
-        let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
-            return Err("The model was not sent as bytes.".to_owned());
-        };
+        let bytes = super::body_bytes(request.body())
+            .ok_or_else(|| "The model was not sent as bytes.".to_owned())?;
         let build = request
             .headers()
             .get("x-atlas-build")
             .and_then(|value| value.to_str().ok())
             .filter(|value| !value.is_empty())
             .map(str::to_owned);
-        let bytes = bytes.clone();
         let builds = library.maps_folder().join(crate::scenebuilds::BUILDS_DIR);
         crate::keep::reading();
         blocking(move || super::keep_model_part(&builds, build.as_deref(), &bytes)).await
+    }
+}
+
+/// The bytes a command was sent: the request's raw body, or, when the
+/// webview sent it through its slower message path (which turns bytes into
+/// a list of numbers), that list read back.
+fn body_bytes(body: &tauri::ipc::InvokeBody) -> Option<Vec<u8>> {
+    match body {
+        tauri::ipc::InvokeBody::Raw(bytes) => Some(bytes.clone()),
+        tauri::ipc::InvokeBody::Json(serde_json::Value::Array(items)) => items
+            .iter()
+            .map(|item| item.as_u64().and_then(|n| u8::try_from(n).ok()))
+            .collect(),
+        tauri::ipc::InvokeBody::Json(_) => None,
     }
 }
 
@@ -580,6 +592,27 @@ pub mod commands {
 mod tests {
     use super::*;
     use crate::tiles::store::tests::TempDir;
+
+    #[test]
+    fn body_bytes_reads_raw_bodies_and_lists_of_numbers() {
+        use tauri::ipc::InvokeBody;
+        assert_eq!(
+            body_bytes(&InvokeBody::Raw(vec![1, 2, 255])),
+            Some(vec![1, 2, 255])
+        );
+        assert_eq!(
+            body_bytes(&InvokeBody::Json(serde_json::json!([0, 7, 255]))),
+            Some(vec![0, 7, 255])
+        );
+        assert_eq!(
+            body_bytes(&InvokeBody::Json(serde_json::json!([256]))),
+            None
+        );
+        assert_eq!(
+            body_bytes(&InvokeBody::Json(serde_json::json!({ "a": 1 }))),
+            None
+        );
+    }
 
     #[test]
     fn lists_and_reads_only_inside_the_folder_picked() {

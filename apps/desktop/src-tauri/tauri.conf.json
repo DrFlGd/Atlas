@@ -31,7 +31,7 @@
         "worker-src": "'self' blob:",
         "style-src": "'self'",
         "img-src": "'self' data: blob: atlas-pack: http://atlas-pack.localhost",
-        "connect-src": "'self' blob: atlas-pack: http://atlas-pack.localhost",
+        "connect-src": "'self' blob: ipc: http://ipc.localhost atlas-pack: http://atlas-pack.localhost",
         "font-src": "'self'",
         "object-src": "'none'",
         "base-uri": "'self'",
